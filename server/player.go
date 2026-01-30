@@ -21,11 +21,12 @@ type player struct {
 }
 
 func (s *server) Register(ctx context.Context, req *api.RegisterRequest) (*api.RegisterResponse, error) {
+	s.playersLock.Lock()
+	defer s.playersLock.Unlock()
+
 	if req.GetName() == "" {
 		return nil, status.Error(codes.InvalidArgument, "name cannot be empty")
 	}
-	s.playersLock.Lock()
-	defer s.playersLock.Unlock()
 
 	if s.gameStarted.Load() {
 		return nil, status.Error(codes.FailedPrecondition, "game already started")
