@@ -75,6 +75,7 @@ func (s *server) run(ctx context.Context) {
 		nextState := processTurn(s.currentState, actions, s.turnCount)
 		s.stateHistory = append(s.stateHistory, s.currentState)
 		s.currentState = nextState
+		s.currentState.Turn = s.turnCount
 		s.stateLock.Unlock()
 	}
 }
