@@ -1,2 +1,5 @@
 generate:
-	@protoc -I. --go_out=paths=source_relative:. server/api/api.proto 
+	@buf generate 
+
+fix:
+	@buf format -w

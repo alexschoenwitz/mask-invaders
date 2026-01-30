@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+import "google/api/annotations.proto";
+
+package api;
+
+option go_package = "github.com/alexschoenwitz/mask-invaders/api";
+
+service Server {
+  rpc GetState(GetStateRequest) returns (GetStateResponse) {
+    option (google.api.http) = {
+      post: "/v1/state"
+      body: "*"
+    };
+  }
+}
+
+message GetStateRequest {}
+
+message GetStateResponse {
+  // TODO
+  string greeting = 1;
+}

@@ -1,53 +1,43 @@
 package main
 
 import (
-	"fmt"
-	"io"
-	"log"
+	"context"
+	"net"
 	"net/http"
 
-	// Replace "your-module/proto" with your actual module path
-
-	"google.golang.org/protobuf/proto"
+	"github.com/alexschoenwitz/mask-invaders/server/api" // Your generated code
+	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
-func helloHandler(w http.ResponseWriter, r *http.Request) {
-	// 1. Read the request body
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, "Failed to read body", http.StatusBadRequest)
-		return
-	}
+// --- The gRPC Server ---
+type server struct {
+	api.Unim
+}
 
-	// 2. Unmarshal the Protobuf message
-	req := &proto.HelloRequest{}
-	if err := proto.Unmarshal(body, req); err != nil {
-		http.Error(w, "Failed to parse proto", http.StatusBadRequest)
-		return
-	}
-
-	// 3. Create a response message
-	res := &proto.HelloResponse{
-		Greeting: fmt.Sprintf("Hello, %s! Your Go server is working.", req.GetName()),
-	}
-
-	// 4. Marshal the response back to binary
-	responseBytes, err := proto.Marshal(res)
-	if err != nil {
-		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
-		return
-	}
-
-	// 5. Send it back
-	w.Header().Set("Content-Type", "application/x-protobuf")
-	w.Write(responseBytes)
+func (s *server) Echo(ctx context.Context, req *api.EchoRequest) (*api.EchoResponse, error) {
+	return &api.EchoResponse{Greeting: "Hello " + req.Name}, nil
 }
 
 func main() {
-	http.HandleFunc("/hello", helloHandler)
+	// 1. Start gRPC Server (Binary)
+	lis, _ := net.Listen("tcp", ":9090")
+	s := grpc.NewServer()
+	api.RegisterEchoServiceServer(s, &server{})
+	go s.Serve(lis)
 
-	fmt.Println("Server starting on :8080...")
-	if err := http.ListenAndServe(":8080", nil); err != nil {
-		log.Fatal(err)
-	}
+	// 2. Start Gateway Proxy (JSON -> gRPC)
+	conn, _ := grpc.DialContext(
+		context.Background(),
+		"0.0.0.0:9090",
+		grpc.WithBlock(),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+
+	gwmux := runtime.NewServeMux()
+	api.RegisterEchoServiceHandler(context.Background(), gwmux, conn)
+
+	// Serve the JSON API on port 8080
+	http.ListenAndServe(":8080", gwmux)
 }
