@@ -20,16 +20,14 @@ import (
 type server struct {
 	api.UnimplementedServerServer
 
-	turnCount int64
-
-	currentState *api.State
-	stateHistory []*api.State
-	stateLock    sync.RWMutex
-	players      []*player
-
-	submittedActions map[string]*api.Action
-	actionsLock      sync.Mutex
 	actionQueue      chan *api.Action
+	actionsLock      sync.Mutex
+	currentState     *api.State
+	players          map[string]*player
+	stateHistory     []*api.State
+	stateLock        sync.RWMutex
+	submittedActions map[string]*api.Action
+	turnCount        int64
 }
 
 func main() {
@@ -41,10 +39,11 @@ func main() {
 		log.Fatalf("failed to listen: %v", err)
 	}
 
-	grpcServer := grpc.NewServer()
+	grpcServer := grpc.NewServer(grpc.UnaryInterceptor(serverInterceptor))
 	s := &server{
 		submittedActions: make(map[string]*api.Action),
 		actionQueue:      make(chan *api.Action, 10),
+		players:          make(map[string]*player),
 	}
 	s.run(ctx)
 	api.RegisterServerServer(grpcServer, s)
