@@ -45,7 +45,7 @@ func main() {
 		actionQueue:      make(chan *api.Action, 10),
 		players:          make(map[string]*player),
 	}
-	s.run(ctx)
+	go s.run(ctx)
 	api.RegisterServerServer(grpcServer, s)
 
 	go func() {
