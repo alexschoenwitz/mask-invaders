@@ -16,7 +16,6 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-// --- The gRPC Server ---
 type server struct {
 	api.UnimplementedServerServer
 }
