@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -34,7 +35,7 @@ type server struct {
 	submittedActions map[string]*api.Action
 
 	turnCount   int64
-	gameStarted sync.Mutex // locked once started
+	gameStarted atomic.Bool // locked once started
 }
 
 func main() {

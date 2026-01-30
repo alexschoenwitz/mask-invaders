@@ -22,13 +22,13 @@ type player struct {
 }
 
 func (s *server) Register(ctx context.Context, req *api.RegisterRequest) (*api.RegisterResponse, error) {
-	if !s.gameStarted.TryLock() {
-		return nil, status.Error(codes.FailedPrecondition, "game already started")
-	}
-	s.gameStarted.Unlock()
-
 	s.playersLock.Lock()
 	defer s.playersLock.Unlock()
+
+	if s.gameStarted.Load() {
+		return nil, status.Error(codes.FailedPrecondition, "game already started")
+	}
+
 	if len(s.players) >= 16 {
 		return nil, status.Error(codes.InvalidArgument, "no more players allowed")
 	}
@@ -42,10 +42,10 @@ func (s *server) Register(ctx context.Context, req *api.RegisterRequest) (*api.R
 }
 
 func serverInterceptor(ctx context.Context,
-	req interface{},
+	req any,
 	info *grpc.UnaryServerInfo,
 	handler grpc.UnaryHandler,
-) (interface{}, error) {
+) (any, error) {
 	s, ok := info.Server.(*server)
 	if !ok {
 		return nil, status.Error(codes.Internal, "what happened to the server?")
