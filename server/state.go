@@ -146,9 +146,56 @@ func processTurn(currentState *api.State, actions map[string]*api.Action, turnCo
 }
 
 func (s *server) StartGame(ctx context.Context, req *api.StartGameRequest) (*api.StartGameResponse, error) {
-	if !s.gameStarted.TryLock() {
+	s.playersLock.Lock()
+	defer s.playersLock.Unlock()
+
+	if !s.gameStarted.CompareAndSwap(false, true) {
 		return nil, status.Error(codes.FailedPrecondition, "game already started")
 	}
+
+	if len(s.players) < 2 {
+		return nil, status.Error(codes.FailedPrecondition, "not enough players to start the game")
+	}
+
+	// initialize the game state
+	initialState := &api.State{
+		Cities:    make(map[string]*api.City),
+		Movements: []*api.Movement{},
+		Distances: make(map[string]*api.Distance),
+	}
+
+	for _, v := range s.players {
+		// do a city per player with equal troops
+		cityName := fmt.Sprintf("City-%s", v.name)
+		initialState.Cities[cityName] = &api.City{
+			Player: v.name,
+			Troops: map[string]int64{
+				troopA: 10,
+				troopB: 10,
+				troopC: 10,
+			},
+		}
+	}
+
+	// define some distances between cities with randomness for variety between 4 and 8 turns
+	cityNames := []string{}
+	for cityName := range initialState.Cities {
+		cityNames = append(cityNames, cityName)
+	}
+	for i := 0; i < len(cityNames); i++ {
+		for j := i + 1; j < len(cityNames); j++ {
+			distance := int64(4 + (i+j)%5) // pseudo-random for now
+			initialState.Distances[cityNames[i]+cityNames[j]] = &api.Distance{
+				Edge:     cityNames[i] + cityNames[j],
+				Distance: distance,
+			}
+		}
+	}
+
+	s.currentState = initialState
+	s.stateHistory = []*api.State{}
+	s.turnCount = 0
+
 	return &api.StartGameResponse{}, nil
 }
 
