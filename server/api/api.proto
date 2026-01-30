@@ -21,3 +21,25 @@ message GetStateResponse {
   // TODO
   string greeting = 1;
 }
+
+message State {
+  map<string, City> cities = 1;
+  repeated Movement movements = 2;
+  repeated Distance distances = 3;
+}
+
+message City {
+  string player = 1;
+  map<string, int64> troops = 2;
+}
+
+message Movement {
+  string edge = 1;
+  map<string, int64> troops = 2;
+  int64 arriving_turn = 3;
+}
+
+message Distance {
+  string edge = 1;
+  int64 distance = 2;
+}
