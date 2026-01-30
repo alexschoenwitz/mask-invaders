@@ -12,6 +12,11 @@ service Server {
       get: "/v1/state"
     };
   }
+  rpc PostAction(PostActionRequest) returns (PostActionResponse) {
+    option (google.api.http) = {
+      post: "/v1/action"
+    };
+  }
 }
 
 message GetStateRequest {}
@@ -40,4 +45,16 @@ message Movement {
 message Distance {
   string edge = 1;
   int64 distance = 2;
+}
+
+message PostActionRequest {
+  Action action = 1;
+}
+
+message PostActionResponse {}
+
+message Action {
+  string from = 1;
+  string to = 2;
+  map<string, int64> troops = 3;
 }

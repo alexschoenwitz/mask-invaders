@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -19,14 +20,11 @@ import (
 type server struct {
 	api.UnimplementedServerServer
 
-	m mage
-}
+	currentState *api.State
+	stateHistory []*api.State
+	stateLock    sync.Mutex
 
-func (s *server) GetState(ctx context.Context, req *api.GetStateRequest) (*api.GetStateResponse, error) {
-	state := s.m.state()
-	return &api.GetStateResponse{
-		State: state,
-	}, nil
+	submittedActions map[string]*api.Action
 }
 
 func main() {
