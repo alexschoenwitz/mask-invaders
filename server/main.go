@@ -26,11 +26,9 @@ func (s *server) GetState(ctx context.Context, req *api.GetStateRequest) (*api.G
 }
 
 func main() {
-	// Create context for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Start gRPC server
 	lis, err := net.Listen("tcp", ":9090")
 	if err != nil {
 		log.Fatalf("failed to listen: %v", err)
@@ -46,7 +44,6 @@ func main() {
 		}
 	}()
 
-	// Connect to gRPC server for gateway
 	conn, err := grpc.NewClient(
 		"localhost:9090",
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
@@ -56,7 +53,6 @@ func main() {
 	}
 	defer conn.Close()
 
-	// Create HTTP gateway
 	gwmux := runtime.NewServeMux()
 	if err := api.RegisterServerHandler(ctx, gwmux, conn); err != nil {
 		log.Fatalf("failed to register gateway: %v", err)
@@ -77,23 +73,19 @@ func main() {
 		}
 	}()
 
-	// Wait for interrupt signal for graceful shutdown
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
 	log.Println("shutting down servers...")
 
-	// Graceful shutdown with timeout
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()
 
-	// Shutdown HTTP server
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
 		log.Printf("HTTP server shutdown error: %v", err)
 	}
 
-	// Stop gRPC server (use Stop with timeout instead of GracefulStop alone)
 	stopped := make(chan struct{})
 	go func() {
 		grpcServer.GracefulStop()
