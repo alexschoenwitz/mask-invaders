@@ -4,9 +4,10 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/alexschoenwitz/mask-invaders/api/server/api"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"github.com/alexschoenwitz/mask-invaders/api/server/api"
 )
 
 const (
@@ -106,7 +107,7 @@ func processTurn(currentState *api.State, actions map[string]*api.Action, turnCo
 	// then process actions
 	for playerID, action := range actions {
 		if action.GetAttack() == nil {
-			continue // we only support attack actions for now
+			continue // we only support attack actions for now (none will skip anyway)
 		}
 		attack := action.GetAttack()
 		// create a new movement
@@ -221,24 +222,27 @@ func (s *server) PostAction(ctx context.Context, req *api.PostActionRequest) (*a
 	// and actually authenticated to do it (?) matches the action player ID
 
 	// check if the action is valid
-	if req.GetAction().GetAttack() == nil {
-		return nil, status.Error(codes.InvalidArgument, "we only support attack actions for now")
-	}
-	attackAction := req.GetAction().GetAttack()
-	if attackAction.GetTroops() == nil {
-		return nil, status.Error(codes.InvalidArgument, "we only support attack actions for now")
-	}
-	if s.currentState.Cities[attackAction.GetFrom()] == nil || s.currentState.Cities[attackAction.GetTo()] == nil {
-		return nil, status.Error(codes.InvalidArgument, "invalid from/to city")
-	}
+	switch req.GetAction().GetAction().(type) {
+	case *api.Action_Attack:
+		attackAction := req.GetAction().GetAttack()
+		if attackAction.GetTroops() == nil {
+			return nil, status.Error(codes.InvalidArgument, "troops must be defined")
+		}
+		if s.currentState.Cities[attackAction.GetFrom()] == nil || s.currentState.Cities[attackAction.GetTo()] == nil {
+			return nil, status.Error(codes.InvalidArgument, "invalid from/to city")
+		}
 
-	for troopType, troopAmmount := range attackAction.GetTroops() {
-		if _, ok := validTroops[troopType]; !ok {
-			return nil, status.Errorf(codes.InvalidArgument, "invalid troop type: %s", troopType)
+		for troopType, troopAmmount := range attackAction.GetTroops() {
+			if _, ok := validTroops[troopType]; !ok {
+				return nil, status.Errorf(codes.InvalidArgument, "invalid troop type: %s", troopType)
+			}
+			if troopAmmount <= 0 || s.currentState.Cities[attackAction.GetFrom()].GetTroops()[troopType] < troopAmmount {
+				return nil, status.Errorf(codes.InvalidArgument, "invalid troop ammount for type %s: %d", troopType, troopAmmount)
+			}
 		}
-		if troopAmmount <= 0 || s.currentState.Cities[attackAction.GetFrom()].GetTroops()[troopType] < troopAmmount {
-			return nil, status.Errorf(codes.InvalidArgument, "invalid troop ammount for type %s: %d", troopType, troopAmmount)
-		}
+	case *api.Action_None:
+	default:
+		return nil, status.Error(codes.InvalidArgument, "unknown action type")
 	}
 
 	// register the submitted action based on
