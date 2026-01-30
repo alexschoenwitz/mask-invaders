@@ -20,7 +20,7 @@ service Server {
   }
   rpc GetStateHistory(GetStateHistoryRequest) returns (GetStateHistoryResponse) {
     option (google.api.http) = {
-      get: "/v1/state/history"
+      get: "/v1/state:history"
     };
   }
   rpc PostAction(PostActionRequest) returns (PostActionResponse) {
