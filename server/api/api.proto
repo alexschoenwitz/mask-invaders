@@ -12,6 +12,11 @@ service Server {
       get: "/v1/state"
     };
   }
+  rpc GetStateHistory(GetStateHistoryRequest) returns (GetStateHistoryResponse) {
+    option (google.api.http) = {
+      get: "/v1/state/history"
+    };
+  }
   rpc PostAction(PostActionRequest) returns (PostActionResponse) {
     option (google.api.http) = {
       post: "/v1/action"
@@ -33,10 +38,16 @@ message GetStateResponse {
   State state = 1;
 }
 
+message GetStateHistoryRequest {}
+
+message GetStateHistoryResponse {
+  repeated State states = 1;
+}
+
 message State {
   map<string, City> cities = 1;
   repeated Movement movements = 2;
-  repeated Distance distances = 3;
+  map<string, Distance> distances = 3;
 }
 
 message City {
@@ -45,9 +56,11 @@ message City {
 }
 
 message Movement {
-  string edge = 1;
-  map<string, int64> troops = 2;
-  int64 arriving_turn = 3;
+  string from = 1;
+  string to = 2;
+  map<string, int64> troops = 3;
+  int64 arriving_turn = 4;
+  string player = 5;
 }
 
 message Distance {
@@ -62,6 +75,14 @@ message PostActionRequest {
 message PostActionResponse {}
 
 message Action {
+  string type = 1;
+  string player = 2;
+  oneof action {
+    Attack attack = 3;
+  }
+}
+
+message Attack {
   string from = 1;
   string to = 2;
   map<string, int64> troops = 3;

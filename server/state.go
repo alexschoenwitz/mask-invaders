@@ -2,17 +2,193 @@ package main
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/alexschoenwitz/mask-invaders/api/server/api"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
+const (
+	troopA = "A"
+	troopB = "B"
+	troopC = "C"
+)
+
+var (
+	validTroops = map[string]struct{}{
+		troopA: {},
+		troopB: {},
+		troopC: {},
+	}
+
+	// not used yet
+	troopImpact = map[string]map[string]float64{
+		troopA: {
+			troopA: 1.0,
+			troopB: 0.5,
+			troopC: 2.0,
+		},
+		troopB: {
+			troopA: 2.0,
+			troopB: 1.0,
+			troopC: 0.5,
+		},
+		troopC: {
+			troopA: 0.5,
+			troopB: 2.0,
+			troopC: 1.0,
+		},
+	}
+)
+
+func (s *server) run(ctx context.Context) {
+	for {
+		if s.turnCount > 1000 {
+			return // you really suck at this game if it goes on for more than 1000 turns
+		}
+
+		select {
+		case action := <-s.actionQueue:
+			s.submittedActions[action.GetPlayer()] = action
+			if len(s.submittedActions) != len(s.players) {
+				continue
+			}
+
+			// every player submitted an action, process the turn!
+			s.actionsLock.Lock()
+			actions := s.submittedActions
+			s.submittedActions = make(map[string]*api.Action)
+			s.actionsLock.Unlock()
+
+			s.stateLock.Lock()
+			s.turnCount++
+			nextState := processTurn(s.currentState, actions, s.turnCount)
+			s.stateHistory = append(s.stateHistory, s.currentState)
+			s.currentState = nextState
+			s.stateLock.Unlock()
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+func processTurn(currentState *api.State, actions map[string]*api.Action, turnCount int64) *api.State {
+	newState := &api.State{
+		Cities:    make(map[string]*api.City),
+		Movements: []*api.Movement{},
+		Distances: currentState.Distances,
+	}
+
+	// first process movements
+	for _, movement := range currentState.Movements {
+		if movement.ArrivingTurn < int64(turnCount) {
+			// still in transit
+			newState.Movements = append(newState.Movements, movement)
+			continue
+		}
+
+		// arrive at destination
+		city := currentState.Cities[movement.To]
+		if city == nil {
+			fmt.Printf("this should not happen, troops will just disappear")
+			continue
+		}
+		// TODO: calculate battle results and either conquer or not, but at the moment
+		// we have 100% win rate for the attacker just because
+		for troopType, ammount := range movement.Troops {
+			city.Troops[troopType] = ammount
+		}
+		city.Player = movement.Player
+		newState.Cities[movement.To] = city
+	}
+
+	// then process actions
+	for playerID, action := range actions {
+		if action.GetAttack() == nil {
+			continue // we only support attack actions for now
+		}
+		attack := action.GetAttack()
+		// create a new movement
+		distance, ok := currentState.Distances[attack.To+attack.From]
+		if !ok {
+			distance = currentState.Distances[attack.From+attack.To]
+		}
+
+		newMovement := &api.Movement{
+			Player:       playerID,
+			From:         attack.From,
+			To:           attack.To,
+			Troops:       attack.Troops,
+			ArrivingTurn: turnCount + distance.Distance, // TODO: consider speed factors
+		}
+		newState.Movements = append(newState.Movements, newMovement)
+
+		// remove troops from the origin city
+		originCity := currentState.Cities[attack.From]
+		if originCity == nil {
+			fmt.Printf("this should not happen, troops will just disappear")
+			continue
+		}
+		for troopType, ammount := range attack.Troops {
+			originCity.Troops[troopType] -= ammount
+		}
+	}
+
+	// finally, copy over unchanged cities
+	for cityName, city := range currentState.Cities {
+		if newState.Cities[cityName] == nil {
+			newState.Cities[cityName] = city
+		}
+	}
+
+	return newState
+}
+
 func (s *server) GetState(ctx context.Context, req *api.GetStateRequest) (*api.GetStateResponse, error) {
-	return &api.GetStateResponse{
-		State: s.currentState,
-	}, nil
+	s.stateLock.RLock()
+	defer s.stateLock.RUnlock()
+
+	return &api.GetStateResponse{State: s.currentState}, nil
+}
+
+func (s *server) GetStateHistory(ctx context.Context, req *api.GetStateHistoryRequest) (*api.GetStateHistoryResponse, error) {
+	s.stateLock.RLock()
+	defer s.stateLock.RUnlock()
+
+	return &api.GetStateHistoryResponse{States: s.stateHistory}, nil
 }
 
 func (s *server) PostAction(ctx context.Context, req *api.PostActionRequest) (*api.PostActionResponse, error) {
+	s.stateLock.RLock()
+	defer s.stateLock.RUnlock()
+
 	// TODO: verify the player that submitted the action is owner of the city
+	// and actually authenticated to do it (?) matches the action player ID
+
+	// check if the action is valid
+	if req.GetAction().GetAttack() == nil {
+		return nil, status.Error(codes.InvalidArgument, "we only support attack actions for now")
+	}
+	attackAction := req.GetAction().GetAttack()
+	if attackAction.GetTroops() == nil {
+		return nil, status.Error(codes.InvalidArgument, "we only support attack actions for now")
+	}
+	if s.currentState.Cities[attackAction.GetFrom()] == nil || s.currentState.Cities[attackAction.GetTo()] == nil {
+		return nil, status.Error(codes.InvalidArgument, "invalid from/to city")
+	}
+
+	for troopType, troopAmmount := range attackAction.GetTroops() {
+		if _, ok := validTroops[troopType]; !ok {
+			return nil, status.Errorf(codes.InvalidArgument, "invalid troop type: %s", troopType)
+		}
+		if troopAmmount <= 0 || s.currentState.Cities[attackAction.GetFrom()].GetTroops()[troopType] < troopAmmount {
+			return nil, status.Errorf(codes.InvalidArgument, "invalid troop ammount for type %s: %d", troopType, troopAmmount)
+		}
+	}
+
+	// register the submitted action based on
+	s.actionQueue <- req.GetAction()
+
 	return &api.PostActionResponse{}, nil
 }

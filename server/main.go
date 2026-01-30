@@ -20,11 +20,16 @@ import (
 type server struct {
 	api.UnimplementedServerServer
 
+	turnCount int64
+
 	currentState *api.State
 	stateHistory []*api.State
-	stateLock    sync.Mutex
+	stateLock    sync.RWMutex
 	players      []*player
-	// submittedActions map[string]*api.Action
+
+	submittedActions map[string]*api.Action
+	actionsLock      sync.Mutex
+	actionQueue      chan *api.Action
 }
 
 func main() {
@@ -37,7 +42,12 @@ func main() {
 	}
 
 	grpcServer := grpc.NewServer()
-	api.RegisterServerServer(grpcServer, &server{})
+	s := &server{
+		submittedActions: make(map[string]*api.Action),
+		actionQueue:      make(chan *api.Action, 10),
+	}
+	s.run(ctx)
+	api.RegisterServerServer(grpcServer, s)
 
 	go func() {
 		log.Println("gRPC server starting on :9090")
