@@ -36,6 +36,7 @@ func (s *server) Register(ctx context.Context, req *api.RegisterRequest) (*api.R
 	if len(s.players) >= 16 {
 		return nil, status.Error(codes.InvalidArgument, "no more players allowed")
 	}
+
 	id := uuid.NewString()
 	token := uuid.NewString()
 
@@ -45,6 +46,7 @@ func (s *server) Register(ctx context.Context, req *api.RegisterRequest) (*api.R
 	}
 	return &api.RegisterResponse{
 		Token: token,
+		Id:    id,
 	}, nil
 }
 
@@ -82,16 +84,13 @@ func isAuthorized(s *server, ctx context.Context) bool {
 		return true
 	}
 
-	playerID, ok := ctx.Value(playerTokenKey).(string)
-	if !ok {
+	playerToken, playerExists := ctx.Value(playerTokenKey).(string)
+	if !playerExists {
 		return false
 	}
-	for k := range s.players {
-		if k == playerID {
-			return true
-		}
-	}
-	return false
+
+	_, playerExists = s.players[playerToken]
+	return playerExists
 }
 
 func (s *server) playerID(ctx context.Context) (string, bool) {
