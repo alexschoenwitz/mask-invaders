@@ -33,7 +33,8 @@ type server struct {
 
 	submittedActions map[string]*api.Action
 
-	turnCount int64
+	turnCount   int64
+	gameStarted sync.Mutex // locked once started
 }
 
 func main() {

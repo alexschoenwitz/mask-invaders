@@ -7,6 +7,12 @@ package api;
 option go_package = "github.com/alexschoenwitz/mask-invaders/api";
 
 service Server {
+  rpc StartGame(StartGameRequest) returns (StartGameResponse) {
+    option (google.api.http) = {
+      post: "/v1/start"
+      body: "*"
+    };
+  }
   rpc GetState(GetStateRequest) returns (GetStateResponse) {
     option (google.api.http) = {
       get: "/v1/state"
@@ -31,6 +37,10 @@ service Server {
     };
   }
 }
+
+message StartGameRequest {}
+
+message StartGameResponse {}
 
 message GetStateRequest {}
 

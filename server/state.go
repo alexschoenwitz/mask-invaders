@@ -145,6 +145,13 @@ func processTurn(currentState *api.State, actions map[string]*api.Action, turnCo
 	return newState
 }
 
+func (s *server) StartGame(ctx context.Context, req *api.StartGameRequest) (*api.StartGameResponse, error) {
+	if !s.gameStarted.TryLock() {
+		return nil, status.Error(codes.FailedPrecondition, "game already started")
+	}
+	return &api.StartGameResponse{}, nil
+}
+
 func (s *server) GetState(ctx context.Context, req *api.GetStateRequest) (*api.GetStateResponse, error) {
 	s.stateLock.RLock()
 	defer s.stateLock.RUnlock()
