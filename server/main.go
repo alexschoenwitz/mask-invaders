@@ -23,11 +23,11 @@ import (
 type server struct {
 	api.UnimplementedServerServer
 
-	currentState     *api.State
-	stateHistory     []*api.State
-	stateLock        sync.Mutex
-	players          []*player
-	submittedActions map[string]*api.Action
+	currentState *api.State
+	stateHistory []*api.State
+	stateLock    sync.Mutex
+	players      []*player
+	// submittedActions map[string]*api.Action
 }
 
 func (s *server) Register(ctx context.Context, req *api.RegisterRequest) (*api.RegisterResponse, error) {
