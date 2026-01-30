@@ -9,8 +9,7 @@ option go_package = "github.com/alexschoenwitz/mask-invaders/api";
 service Server {
   rpc GetState(GetStateRequest) returns (GetStateResponse) {
     option (google.api.http) = {
-      post: "/v1/state"
-      body: "*"
+      get: "/v1/state"
     };
   }
 }

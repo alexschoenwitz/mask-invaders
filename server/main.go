@@ -16,7 +16,7 @@ type server struct {
 	api.UnimplementedServerServer
 }
 
-func (s *server) Echo(ctx context.Context, req *api.GetStateRequest) (*api.GetStateResponse, error) {
+func (s *server) GetState(ctx context.Context, req *api.GetStateRequest) (*api.GetStateResponse, error) {
 	return &api.GetStateResponse{Greeting: "Hello"}, nil
 }
 
@@ -31,7 +31,6 @@ func main() {
 	conn, _ := grpc.DialContext(
 		context.Background(),
 		"0.0.0.0:9090",
-		grpc.WithBlock(),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)
 
