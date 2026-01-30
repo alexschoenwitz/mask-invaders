@@ -85,8 +85,7 @@ message PostActionRequest {
 message PostActionResponse {}
 
 message Action {
-  string type = 1;
-  string player = 2;
+  string player = 1;
   oneof action {
     Attack attack = 3;
     None none = 4;

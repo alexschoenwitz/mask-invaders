@@ -231,7 +231,6 @@ func (s *server) PostAction(ctx context.Context, req *api.PostActionRequest) (*a
 		if s.currentState.Cities[attackAction.GetFrom()] == nil || s.currentState.Cities[attackAction.GetTo()] == nil {
 			return nil, status.Error(codes.InvalidArgument, "invalid from/to city")
 		}
-
 		for troopType, troopAmmount := range attackAction.GetTroops() {
 			if _, ok := validTroops[troopType]; !ok {
 				return nil, status.Errorf(codes.InvalidArgument, "invalid troop type: %s", troopType)
