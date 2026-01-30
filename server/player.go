@@ -12,11 +12,12 @@ import (
 )
 
 const (
-	playerIDKey      string = "playerID"
+	playerTokenKey   string = "playerToken"
 	isRegisterCtxKey string = "register"
 )
 
 type player struct {
+	id   string
 	name string
 }
 
@@ -35,9 +36,12 @@ func (s *server) Register(ctx context.Context, req *api.RegisterRequest) (*api.R
 	if len(s.players) >= 16 {
 		return nil, status.Error(codes.InvalidArgument, "no more players allowed")
 	}
+	id := uuid.NewString()
 	token := uuid.NewString()
+
 	s.players[token] = &player{
 		name: req.Name,
+		id:   id,
 	}
 	return &api.RegisterResponse{
 		Token: token,
@@ -61,7 +65,7 @@ func serverInterceptor(ctx context.Context,
 
 	authHeaders, ok := md["authorization"]
 	if ok && len(authHeaders) > 0 {
-		ctx = context.WithValue(ctx, playerIDKey, authHeaders[0])
+		ctx = context.WithValue(ctx, playerTokenKey, authHeaders[0])
 	}
 
 	ctx = context.WithValue(ctx, isRegisterCtxKey, info.FullMethod == api.Server_Register_FullMethodName)
@@ -78,7 +82,7 @@ func isAuthorized(s *server, ctx context.Context) bool {
 		return true
 	}
 
-	playerID, ok := ctx.Value(playerIDKey).(string)
+	playerID, ok := ctx.Value(playerTokenKey).(string)
 	if !ok {
 		return false
 	}
@@ -91,7 +95,7 @@ func isAuthorized(s *server, ctx context.Context) bool {
 }
 
 func (s *server) playerID(ctx context.Context) (string, bool) {
-	playerID, ok := ctx.Value(playerIDKey).(string)
+	playerID, ok := ctx.Value(playerTokenKey).(string)
 	if !ok {
 		return "", false
 	}

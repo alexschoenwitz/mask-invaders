@@ -164,11 +164,11 @@ func (s *server) StartGame(ctx context.Context, req *api.StartGameRequest) (*api
 		Distances: make(map[string]*api.Distance),
 	}
 
-	for v := range s.players {
+	for _, p := range s.players {
 		// do a city per player with equal troops
-		cityName := fmt.Sprintf("City-%s", v)
+		cityName := fmt.Sprintf("City-%s", p.id)
 		initialState.Cities[cityName] = &api.City{
-			Player: v,
+			Player: p.id,
 			Troops: map[string]int64{
 				troopA: 10,
 				troopB: 10,

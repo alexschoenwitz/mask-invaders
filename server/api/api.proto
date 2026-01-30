@@ -103,5 +103,6 @@ message RegisterRequest {
 }
 
 message RegisterResponse {
-  string token = 1;
+  string id = 1;
+  string token = 2;
 }
