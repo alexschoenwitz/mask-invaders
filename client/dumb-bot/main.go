@@ -21,11 +21,11 @@ const (
 
 func main() {
 	// 1. Register the bot
-	token, err := register()
+	token, playerID, err := register()
 	if err != nil {
 		log.Fatalf("Failed to register: %v", err)
 	}
-	log.Printf("Registered with token: %s", token)
+	log.Printf("Registered with token: %s, playerID: %s", token, playerID)
 
 	// 2. Try to start the game for 2 minutes
 	client := &http.Client{Timeout: 10 * time.Second}
@@ -39,8 +39,8 @@ func main() {
 			gameStarted = true
 			break
 		}
-		log.Printf("Failed to start game: %v. Retrying in 10 seconds...", err)
-		time.Sleep(10 * time.Second)
+		log.Printf("Failed to start game: %v. Retrying in 1 seconds...", err)
+		time.Sleep(1 * time.Second)
 	}
 
 	if !gameStarted {
@@ -49,33 +49,33 @@ func main() {
 	}
 
 	// 3. Play the game with the dumb strategy
-	playGame(client, token)
+	playGame(client, token, playerID)
 }
 
-func register() (string, error) {
+func register() (string, string, error) {
 	reqBody := &api.RegisterRequest{Name: botName}
 	jsonData, err := protojson.Marshal(reqBody)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	resp, err := http.Post(serverURL+"/v1/register", "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("registration failed with status %d: %s", resp.StatusCode, string(body))
+		return "", "", fmt.Errorf("registration failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
 	var regResp api.RegisterResponse
 	if err := protojson.Unmarshal(body, &regResp); err != nil {
-		return "", err
+		return "", "", err
 	}
 
-	return regResp.Token, nil
+	return regResp.Token, regResp.Id, nil
 }
 
 func startGame(client *http.Client, token string) error {
@@ -104,7 +104,7 @@ func startGame(client *http.Client, token string) error {
 	return nil
 }
 
-func playGame(client *http.Client, token string) {
+func playGame(client *http.Client, token, playerID string) {
 	log.Println("Starting game loop...")
 
 	for {
@@ -121,7 +121,7 @@ func playGame(client *http.Client, token string) {
 		enemyCities := []string{}
 
 		for cityName, city := range state.Cities {
-			if city.Player == token {
+			if city.Player == playerID {
 				myCities = append(myCities, cityName)
 			} else {
 				enemyCities = append(enemyCities, cityName)
@@ -152,7 +152,7 @@ func playGame(client *http.Client, token string) {
 			continue
 		}
 
-		err = attack(client, token, attackFrom, attackTo, city.Troops)
+		err = attack(client, token, playerID, attackFrom, attackTo, city.Troops)
 		if err != nil {
 			log.Printf("Failed to attack: %v", err)
 			continue
@@ -214,10 +214,10 @@ func getDistance(city1, city2 string, distances map[string]*api.Distance) int64 
 	return math.MaxInt64 // No connection found
 }
 
-func attack(client *http.Client, token, from, to string, troops map[string]int64) error {
+func attack(client *http.Client, token, playerID, from, to string, troops map[string]int64) error {
 	action := &api.PostActionRequest{
 		Action: &api.Action{
-			Player: token,
+			Player: playerID,
 			Action: &api.Action_Attack{
 				Attack: &api.Attack{
 					From:   from,

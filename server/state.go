@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -44,33 +45,37 @@ var (
 )
 
 func (s *server) run(ctx context.Context) {
+	ticker := time.NewTicker(200 * time.Millisecond)
 	for {
 		if s.turnCount > 1000 {
 			return // you really suck at this game if it goes on for more than 1000 turns
 		}
 
 		select {
+		case <-ctx.Done():
+			return
 		case action := <-s.actionQueue:
 			s.submittedActions[action.GetPlayer()] = action
 			if len(s.submittedActions) != len(s.players) {
 				continue
 			}
-
-			// every player submitted an action, process the turn!
-			s.actionsLock.Lock()
-			actions := s.submittedActions
-			s.submittedActions = make(map[string]*api.Action)
-			s.actionsLock.Unlock()
-
-			s.stateLock.Lock()
-			s.turnCount++
-			nextState := processTurn(s.currentState, actions, s.turnCount)
-			s.stateHistory = append(s.stateHistory, s.currentState)
-			s.currentState = nextState
-			s.stateLock.Unlock()
-		case <-ctx.Done():
-			return
+		case <-ticker.C:
+			if !s.gameStarted.Load() {
+				continue
+			}
 		}
+		// every player submitted an action, or the timer expired, process the turn!
+		s.actionsLock.Lock()
+		actions := s.submittedActions
+		s.submittedActions = make(map[string]*api.Action)
+		s.actionsLock.Unlock()
+
+		s.stateLock.Lock()
+		s.turnCount++
+		nextState := processTurn(s.currentState, actions, s.turnCount)
+		s.stateHistory = append(s.stateHistory, s.currentState)
+		s.currentState = nextState
+		s.stateLock.Unlock()
 	}
 }
 
@@ -200,6 +205,20 @@ func (s *server) StartGame(ctx context.Context, req *api.StartGameRequest) (*api
 	return &api.StartGameResponse{}, nil
 }
 
+func (s *server) ResetGame(ctx context.Context, req *api.ResetGameRequest) (*api.ResetGameResponse, error) {
+	s.playersLock.Lock()
+	defer s.playersLock.Unlock()
+
+	s.gameStarted.Store(false)
+	s.currentState = nil
+	s.stateHistory = []*api.State{}
+	s.turnCount = 0
+	s.submittedActions = make(map[string]*api.Action)
+	s.players = make(map[string]*player)
+
+	return &api.ResetGameResponse{}, nil
+}
+
 func (s *server) GetState(ctx context.Context, req *api.GetStateRequest) (*api.GetStateResponse, error) {
 	s.stateLock.RLock()
 	defer s.stateLock.RUnlock()
@@ -218,8 +237,13 @@ func (s *server) PostAction(ctx context.Context, req *api.PostActionRequest) (*a
 	s.stateLock.RLock()
 	defer s.stateLock.RUnlock()
 
-	// TODO: verify the player that submitted the action is owner of the city
-	// and actually authenticated to do it (?) matches the action player ID
+	token, ok := getPlayerToken(ctx)
+	if !ok {
+		return nil, status.Error(codes.Internal, "could not get player token from context")
+	}
+	if s.players[token].id != req.GetAction().GetPlayer() {
+		return nil, status.Error(codes.PermissionDenied, "action player does not match token player")
+	}
 
 	// check if the action is valid
 	switch req.GetAction().GetAction().(type) {

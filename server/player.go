@@ -93,7 +93,7 @@ func isAuthorized(s *server, ctx context.Context) bool {
 	return playerExists
 }
 
-func (s *server) playerID(ctx context.Context) (string, bool) {
+func getPlayerToken(ctx context.Context) (string, bool) {
 	playerID, ok := ctx.Value(playerTokenKey).(string)
 	if !ok {
 		return "", false

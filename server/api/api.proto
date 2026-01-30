@@ -13,6 +13,12 @@ service Server {
       body: "*"
     };
   }
+  rpc ResetGame(ResetGameRequest) returns (ResetGameResponse) {
+    option (google.api.http) = {
+      post: "/v1/reset"
+      body: "*"
+    };
+  }
   rpc GetState(GetStateRequest) returns (GetStateResponse) {
     option (google.api.http) = {
       get: "/v1/state"
@@ -42,6 +48,10 @@ message StartGameRequest {}
 
 message StartGameResponse {}
 
+message ResetGameRequest {}
+
+message ResetGameResponse {}
+
 message GetStateRequest {}
 
 message GetStateResponse {
@@ -58,6 +68,7 @@ message State {
   map<string, City> cities = 1;
   repeated Movement movements = 2;
   map<string, Distance> distances = 3;
+  int64 turn = 4;
 }
 
 message City {
