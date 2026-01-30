@@ -20,18 +20,24 @@ action() {
     cities=($(echo "$state" | jq -r '.state.cities | keys[]'))
     city1=${cities[0]}
     city2=${cities[1]}
+    id=$ID_1
 
-    echo "$city1"
-    echo "$ID_1"
     if [[ "$city2" == *"$ID_2" ]]; then
-        c="$city1"
+        c="$city2"
         city2="$city1"
         city1="$c"
+        id=$ID_2
+
     fi
+
+    echo "$token"
+    echo "$city1"
+    echo "$city2"
 
     curl -X POST localhost:8080/v1/action -H "Authorization: $token" -d @- <<EOF
     {
         "action": {
+            "player": "$id",
             "attack": {
                 "from": "$city1",
                 "to": "$city2",
@@ -42,6 +48,8 @@ action() {
         }
     }
 EOF
+
+    sleep 1
 }
 
 for i in $(seq 1 100000); do

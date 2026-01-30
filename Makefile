@@ -4,5 +4,5 @@ generate:
 fix:
 	@buf format -w
 
-run-server:
+run-server: generate
 	@go run ./server/...
