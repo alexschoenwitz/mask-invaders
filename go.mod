@@ -1,4 +1,4 @@
-module gamejam-2026
+module github.com/alexschoenwitz/mask-invaders
 
 go 1.25.5
 

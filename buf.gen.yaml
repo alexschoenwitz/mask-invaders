@@ -2,3 +2,4 @@ version: v2
 plugins:
   - protoc_builtin: go
     out: api
+    opt: paths=source_relative
