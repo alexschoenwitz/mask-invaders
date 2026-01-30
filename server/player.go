@@ -22,10 +22,6 @@ type player struct {
 }
 
 func (s *server) Register(ctx context.Context, req *api.RegisterRequest) (*api.RegisterResponse, error) {
-	if !s.isAuthorized(ctx) {
-		return nil, status.Error(codes.PermissionDenied, "permission denied")
-	}
-
 	if len(s.players) >= 16 {
 		return nil, status.Error(codes.InvalidArgument, "no more players allowed")
 	}
@@ -43,6 +39,11 @@ func serverInterceptor(ctx context.Context,
 	info *grpc.UnaryServerInfo,
 	handler grpc.UnaryHandler,
 ) (interface{}, error) {
+	s, ok := info.Server.(*server)
+	if !ok {
+		return nil, status.Error(codes.Internal, "what happened to the server?")
+	}
+
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
 		return nil, status.Error(codes.Internal, "no metadata in context")
@@ -55,10 +56,14 @@ func serverInterceptor(ctx context.Context,
 
 	ctx = context.WithValue(ctx, isRegisterCtxKey, info.FullMethod == api.Server_Register_FullMethodName)
 
+	if !isAuthorized(s, ctx) {
+		return nil, status.Error(codes.PermissionDenied, "permission denied")
+	}
+
 	return handler(ctx, req)
 }
 
-func (s *server) isAuthorized(ctx context.Context) bool {
+func isAuthorized(s *server, ctx context.Context) bool {
 	if ctx.Value(isRegisterCtxKey).(bool) {
 		return true
 	}

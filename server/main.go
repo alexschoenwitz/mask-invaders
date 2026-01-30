@@ -20,14 +20,20 @@ import (
 type server struct {
 	api.UnimplementedServerServer
 
-	actionQueue      chan *api.Action
-	actionsLock      sync.Mutex
-	currentState     *api.State
-	players          map[string]*player
-	stateHistory     []*api.State
-	stateLock        sync.RWMutex
+	actionsLock sync.Mutex
+	actionQueue chan *api.Action
+
+	currentState *api.State
+
+	playersLock sync.RWMutex
+	players     map[string]*player
+
+	stateLock    sync.RWMutex
+	stateHistory []*api.State
+
 	submittedActions map[string]*api.Action
-	turnCount        int64
+
+	turnCount int64
 }
 
 func main() {

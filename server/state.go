@@ -146,10 +146,6 @@ func processTurn(currentState *api.State, actions map[string]*api.Action, turnCo
 }
 
 func (s *server) GetState(ctx context.Context, req *api.GetStateRequest) (*api.GetStateResponse, error) {
-	if !s.isAuthorized(ctx) {
-		return nil, status.Error(codes.PermissionDenied, "permission denied")
-	}
-
 	s.stateLock.RLock()
 	defer s.stateLock.RUnlock()
 
