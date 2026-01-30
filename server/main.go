@@ -18,10 +18,15 @@ import (
 
 type server struct {
 	api.UnimplementedServerServer
+
+	m mage
 }
 
 func (s *server) GetState(ctx context.Context, req *api.GetStateRequest) (*api.GetStateResponse, error) {
-	return &api.GetStateResponse{State: &api.State{}}, nil
+	state := s.m.state()
+	return &api.GetStateResponse{
+		State: state,
+	}, nil
 }
 
 func main() {
