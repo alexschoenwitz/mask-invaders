@@ -149,12 +149,12 @@ func (s *server) StartGame(ctx context.Context, req *api.StartGameRequest) (*api
 	s.playersLock.Lock()
 	defer s.playersLock.Unlock()
 
-	if !s.gameStarted.CompareAndSwap(false, true) {
-		return nil, status.Error(codes.FailedPrecondition, "game already started")
-	}
-
 	if len(s.players) < 2 {
 		return nil, status.Error(codes.FailedPrecondition, "not enough players to start the game")
+	}
+
+	if !s.gameStarted.CompareAndSwap(false, true) {
+		return nil, status.Error(codes.FailedPrecondition, "game already started")
 	}
 
 	// initialize the game state
@@ -164,11 +164,11 @@ func (s *server) StartGame(ctx context.Context, req *api.StartGameRequest) (*api
 		Distances: make(map[string]*api.Distance),
 	}
 
-	for _, v := range s.players {
+	for v := range s.players {
 		// do a city per player with equal troops
-		cityName := fmt.Sprintf("City-%s", v.name)
+		cityName := fmt.Sprintf("City-%s", v)
 		initialState.Cities[cityName] = &api.City{
-			Player: v.name,
+			Player: v,
 			Troops: map[string]int64{
 				troopA: 10,
 				troopB: 10,
