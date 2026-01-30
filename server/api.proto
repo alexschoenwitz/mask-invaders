@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package server;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = ".";
+
+service Server {
+  
+}
