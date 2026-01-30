@@ -12,8 +12,7 @@ import (
 )
 
 const (
-	playerTokenKey   string = "playerToken"
-	isRegisterCtxKey string = "register"
+	playerTokenKey string = "playerToken"
 )
 
 type player struct {
@@ -55,6 +54,11 @@ func serverInterceptor(ctx context.Context,
 	info *grpc.UnaryServerInfo,
 	handler grpc.UnaryHandler,
 ) (any, error) {
+	// Bypass auth for register
+	if info.FullMethod == api.Server_Register_FullMethodName {
+		return handler(ctx, req)
+	}
+
 	s, ok := info.Server.(*server)
 	if !ok {
 		return nil, status.Error(codes.Internal, "what happened to the server?")
@@ -65,13 +69,16 @@ func serverInterceptor(ctx context.Context,
 		return nil, status.Error(codes.Internal, "no metadata in context")
 	}
 
-	authHeaders, ok := md["authorization"]
-	if ok && len(authHeaders) > 0 {
-		ctx = context.WithValue(ctx, playerTokenKey, authHeaders[0])
+	// All GET requests are authorized
+	methods := md.Get("x-http-method")
+	if len(methods) > 0 && methods[0] == "GET" {
+		return handler(ctx, req)
 	}
 
-	ctx = context.WithValue(ctx, isRegisterCtxKey, info.FullMethod == api.Server_Register_FullMethodName)
-
+	authHeaders := md.Get("authorization")
+	if len(authHeaders) > 0 {
+		ctx = context.WithValue(ctx, playerTokenKey, authHeaders[0])
+	}
 	if !isAuthorized(s, ctx) {
 		return nil, status.Error(codes.PermissionDenied, "permission denied")
 	}
@@ -80,10 +87,6 @@ func serverInterceptor(ctx context.Context,
 }
 
 func isAuthorized(s *server, ctx context.Context) bool {
-	if ctx.Value(isRegisterCtxKey).(bool) {
-		return true
-	}
-
 	playerToken, playerExists := ctx.Value(playerTokenKey).(string)
 	if !playerExists {
 		return false
