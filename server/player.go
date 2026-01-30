@@ -17,11 +17,13 @@ const (
 )
 
 type player struct {
-	name  string
-	token string
+	name string
 }
 
 func (s *server) Register(ctx context.Context, req *api.RegisterRequest) (*api.RegisterResponse, error) {
+	if req.GetName() == "" {
+		return nil, status.Error(codes.InvalidArgument, "name cannot be empty")
+	}
 	s.playersLock.Lock()
 	defer s.playersLock.Unlock()
 
