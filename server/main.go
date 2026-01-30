@@ -12,19 +12,36 @@ import (
 	"time"
 
 	"github.com/alexschoenwitz/mask-invaders/api/server/api"
+	"github.com/google/uuid"
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 )
 
 type server struct {
 	api.UnimplementedServerServer
 
-	currentState *api.State
-	stateHistory []*api.State
-	stateLock    sync.Mutex
-
+	currentState     *api.State
+	stateHistory     []*api.State
+	stateLock        sync.Mutex
+	players          []*player
 	submittedActions map[string]*api.Action
+}
+
+func (s *server) Register(ctx context.Context, req *api.RegisterRequest) (*api.RegisterResponse, error) {
+	if len(s.players) >= 16 {
+		return nil, status.Error(codes.InvalidArgument, "no more players allowed")
+	}
+	token := uuid.NewString()
+	s.players = append(s.players, &player{
+		name:  req.Name,
+		token: token,
+	})
+	return &api.RegisterResponse{
+		Token: token,
+	}, nil
 }
 
 func main() {

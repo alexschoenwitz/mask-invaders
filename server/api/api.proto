@@ -15,6 +15,14 @@ service Server {
   rpc PostAction(PostActionRequest) returns (PostActionResponse) {
     option (google.api.http) = {
       post: "/v1/action"
+      body: "*"
+    };
+  }
+
+  rpc Register(RegisterRequest) returns (RegisterResponse) {
+    option (google.api.http) = {
+      post: "/v1/register"
+      body: "*"
     };
   }
 }
@@ -57,4 +65,12 @@ message Action {
   string from = 1;
   string to = 2;
   map<string, int64> troops = 3;
+}
+
+message RegisterRequest {
+  string name = 1;
+}
+
+message RegisterResponse {
+  string token = 1;
 }
