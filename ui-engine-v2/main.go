@@ -635,11 +635,19 @@ func (g *Game) drawTroopsAtCity(screen *ebiten.Image, city *CityDisplay, scale f
 			troopY := city.Y*scale + offset*math.Sin(angle)
 
 			// Draw oval shadow marker below troop
-			ovalCenterX := float32(troopX)
-			ovalCenterY := float32(troopY + 15*scale)
-			ovalRadiusX := float32(20 * scale)
-			ovalRadiusY := float32(8 * scale)
-			drawFilledOval(screen, ovalCenterX, ovalCenterY, ovalRadiusX, ovalRadiusY, playerColor)
+			// Make color less strong (30% opacity)
+			shadowColor := color.RGBA{
+				R: playerColor.R,
+				G: playerColor.G,
+				B: playerColor.B,
+				A: 76, // 30% of 255
+			}
+			// Center better (add sprite width offset), smaller size, more down
+			ovalCenterX := float32(troopX + 8*scale) // Center it better
+			ovalCenterY := float32(troopY + 20*scale) // Move it more down
+			ovalRadiusX := float32(12 * scale) // Smaller width
+			ovalRadiusY := float32(5 * scale)  // Smaller height
+			drawFilledOval(screen, ovalCenterX, ovalCenterY, ovalRadiusX, ovalRadiusY, shadowColor)
 
 			// Draw troop sprite without tint
 			troopSprite := NewTroopSprite(troopType)
@@ -668,11 +676,19 @@ func (g *Game) drawMovement(screen *ebiten.Image, movement *MovementDisplay, sca
 			offsetY := currentY + float64((i-1)*8)*scale
 
 			// Draw oval shadow marker below troop
-			ovalCenterX := float32(offsetX)
-			ovalCenterY := float32(offsetY + 15*scale)
-			ovalRadiusX := float32(20 * scale)
-			ovalRadiusY := float32(8 * scale)
-			drawFilledOval(screen, ovalCenterX, ovalCenterY, ovalRadiusX, ovalRadiusY, playerColor)
+			// Make color less strong (30% opacity)
+			shadowColor := color.RGBA{
+				R: playerColor.R,
+				G: playerColor.G,
+				B: playerColor.B,
+				A: 76, // 30% of 255
+			}
+			// Center better (add sprite width offset), smaller size, more down
+			ovalCenterX := float32(offsetX + 8*scale) // Center it better
+			ovalCenterY := float32(offsetY + 20*scale) // Move it more down
+			ovalRadiusX := float32(12 * scale) // Smaller width
+			ovalRadiusY := float32(5 * scale)  // Smaller height
+			drawFilledOval(screen, ovalCenterX, ovalCenterY, ovalRadiusX, ovalRadiusY, shadowColor)
 
 			// Draw troop sprite without tint
 			troopSprite := NewTroopSprite(troopType)
