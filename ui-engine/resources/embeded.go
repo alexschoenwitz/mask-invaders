@@ -16,4 +16,10 @@ var (
 
 	//go:embed down-of-day.png
 	DownOfDay_png []byte
+
+	//go:embed knight.png
+	Knight_png []byte
+
+	//go:embed image.png
+	Temp_png []byte
 )
