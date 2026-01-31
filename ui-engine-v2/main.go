@@ -535,6 +535,19 @@ func (g *Game) drawCity(screen *ebiten.Image, city *CityDisplay) {
 	ebitenutil.DrawRect(screen, float64(x-halfSize), float64(y-halfSize), 2, float64(size), playerColor)
 	ebitenutil.DrawRect(screen, float64(x+halfSize-2), float64(y-halfSize), 2, float64(size), playerColor)
 
+	// Draw city name
+	ebitenutil.DebugPrintAt(screen, city.Name, x-halfSize+2, y-halfSize-15)
+
+	// Draw troop counts inside the city
+	troopTypes := []string{"A", "B", "C"}
+	yOffset := y - halfSize + 10
+	for _, troopType := range troopTypes {
+		count := city.Troops[troopType]
+		text := fmt.Sprintf("%s:%d", troopType, count)
+		ebitenutil.DebugPrintAt(screen, text, x-halfSize+5, yOffset)
+		yOffset += 12
+	}
+
 	// Draw troops around the city
 	g.drawTroopsAtCity(screen, city)
 }

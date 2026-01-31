@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"time"
 
@@ -148,8 +149,10 @@ func (s *server) run(ctx context.Context) {
 		s.stateLock.Unlock()
 
 		if victory {
-			time.Sleep(2 * time.Second) // be nice enough for players to be able to read the victory state
-			s.shutdown()
+			log.Println("Victory condition met, resetting game in 5 seconds...")
+			time.Sleep(5 * time.Second)
+			s.resetGameState()
+			log.Println("Game state reset. Waiting for players to register again...")
 		}
 	}
 }
@@ -256,6 +259,13 @@ func (s *server) StartGame(ctx context.Context, req *api.StartGameRequest) (*api
 		return nil, status.Error(codes.FailedPrecondition, "game already started")
 	}
 
+	s.initializeGameState()
+
+	return &api.StartGameResponse{}, nil
+}
+
+// initializeGameState creates the initial game state (separated for reuse)
+func (s *server) initializeGameState() {
 	// initialize the game state
 	initialState := &api.State{
 		Cities:    make(map[string]*api.City),
@@ -296,19 +306,45 @@ func (s *server) StartGame(ctx context.Context, req *api.StartGameRequest) (*api
 	s.currentState = initialState
 	s.stateHistory = []*api.State{}
 	s.turnCount = 0
+}
 
-	return &api.StartGameResponse{}, nil
+// resetGameState resets the game state and clears players so they can register again
+func (s *server) resetGameState() {
+	s.stateLock.Lock()
+	s.gameStarted.Store(false)
+	s.currentState = nil
+	s.stateHistory = []*api.State{}
+	s.turnCount = 0
+	s.stateLock.Unlock()
+
+	s.actionsLock.Lock()
+	s.submittedActions = make(map[string]*api.Action)
+	s.actionsLock.Unlock()
+	
+	// Clear players so they can register again for the new game
+	s.playersLock.Lock()
+	s.players = make(map[string]*player)
+	s.playersLock.Unlock()
+	
+	log.Println("All players cleared. Ready for new registrations.")
 }
 
 func (s *server) ResetGame(ctx context.Context, req *api.ResetGameRequest) (*api.ResetGameResponse, error) {
 	s.playersLock.Lock()
 	defer s.playersLock.Unlock()
 
+	s.stateLock.Lock()
+	defer s.stateLock.Unlock()
+
 	s.gameStarted.Store(false)
 	s.currentState = nil
 	s.stateHistory = []*api.State{}
 	s.turnCount = 0
+
+	s.actionsLock.Lock()
 	s.submittedActions = make(map[string]*api.Action)
+	s.actionsLock.Unlock()
+
 	s.players = make(map[string]*player)
 
 	return &api.ResetGameResponse{}, nil
