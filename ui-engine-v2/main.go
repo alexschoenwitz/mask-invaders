@@ -20,16 +20,17 @@ import (
 )
 
 const (
-	screenWidth   = 1200
-	screenHeight  = 800
-	minCitySize   = 50
-	maxCitySize   = 60
-	minTroopSize  = 8
-	maxTroopSize  = 10
-	turnDuration  = 100 * time.Millisecond
-	pollInterval  = 200 * time.Millisecond // How often to poll the server
-	tweenDuration = 150 * time.Millisecond // How long to smoothly tween to new positions
-	defaultAPIURL = "http://localhost:8080"
+	screenWidth      = 1200
+	screenHeight     = 800
+	minCitySize      = 50
+	maxCitySize      = 60
+	minTroopSize     = 8
+	maxTroopSize     = 10
+	pollInterval     = 200 * time.Millisecond // How often to poll the server
+	turnPlaybackRate = 500 * time.Millisecond // Fixed rate to consume states from buffer
+	minBufferStates  = 3                      // Minimum states to buffer before starting playback
+	stateBufferSize  = 20                     // Number of states to keep in buffer
+	defaultAPIURL    = "http://localhost:8080"
 )
 
 // Game state structures - using API protobuf types
@@ -54,12 +55,20 @@ type MovementDisplay struct {
 	Progress     float64 // 0.0 to 1.0
 }
 
+// StateBuffer holds a state and when it was received
+type StateBuffer struct {
+	state      *api.State
+	receivedAt time.Time
+}
+
 // Game represents the main game state
 type Game struct {
 	apiURL          string
 	httpClient      *http.Client
-	states          []*api.State
+	states          []*api.State  // All states (for replay mode)
+	stateBuffer     []StateBuffer // Buffered states with timestamps (for live mode)
 	currentStateIdx int
+	displayStateIdx int // Index in buffer we're currently displaying
 	lastUpdate      time.Time
 	lastPoll        time.Time
 	turnProgress    float64 // 0.0 to 1.0 progress within current turn
@@ -71,14 +80,9 @@ type Game struct {
 	playerList      []string
 	frameCount      int
 	offscreen       *ebiten.Image
-	isLiveMode      bool      // true if using live API, false if replay mode
-	lastStateTime   time.Time // When we received the last state update
-	lastStateTurn   int64     // Last turn number we received from server
-	// Tweening fields for smooth interpolation
-	tweenStartTime  time.Time // When we started tweening
-	tweenStartTurn  float64   // Turn value when we started tweening
-	tweenTargetTurn float64   // Target turn value from server
-	tweenDuration   time.Duration // How long to tween
+	isLiveMode      bool          // true if using live API, false if replay mode
+	animationStart  time.Time     // When we started animating current turn
+	turnDuration    time.Duration // Duration for current turn animation
 }
 
 // Player colors palette
@@ -135,16 +139,18 @@ func NewGameLive(apiURL string) (*Game, error) {
 	}
 
 	game := &Game{
-		apiURL:       apiURL,
-		httpClient:   &http.Client{Timeout: 5 * time.Second},
-		states:       []*api.State{},
-		lastUpdate:   time.Now(),
-		lastPoll:     time.Now(),
-		cities:       make(map[string]*CityDisplay),
-		playerColors: make(map[string]color.RGBA),
-		colorPalette: colors,
-		offscreen:    ebiten.NewImage(screenWidth, screenHeight),
-		isLiveMode:   true,
+		apiURL:          apiURL,
+		httpClient:      &http.Client{Timeout: 5 * time.Second},
+		states:          []*api.State{},
+		stateBuffer:     make([]StateBuffer, 0, stateBufferSize),
+		lastUpdate:      time.Now(),
+		lastPoll:        time.Now(),
+		cities:          make(map[string]*CityDisplay),
+		playerColors:    make(map[string]color.RGBA),
+		colorPalette:    colors,
+		offscreen:       ebiten.NewImage(screenWidth, screenHeight),
+		isLiveMode:      true,
+		displayStateIdx: -1,
 	}
 
 	// Try to fetch initial state
@@ -191,24 +197,45 @@ func (g *Game) pollServerState() error {
 	}
 
 	// Detect if a new game has started (turn number went backwards or reset)
-	if len(g.states) > 0 && stateResponse.State.Turn < g.states[len(g.states)-1].Turn {
-		log.Printf("New game detected (turn %d < previous %d), resetting state", stateResponse.State.Turn, g.states[len(g.states)-1].Turn)
+	if len(g.stateBuffer) > 0 && stateResponse.State.Turn < g.stateBuffer[len(g.stateBuffer)-1].state.Turn {
+		log.Printf("New game detected (turn %d < previous %d), resetting state", stateResponse.State.Turn, g.stateBuffer[len(g.stateBuffer)-1].state.Turn)
 		// Reset everything for the new game
 		g.states = []*api.State{}
+		g.stateBuffer = make([]StateBuffer, 0, stateBufferSize)
 		g.cities = make(map[string]*CityDisplay)
 		g.playerColors = make(map[string]color.RGBA)
 		g.playerList = nil
 		g.movements = nil
 		g.currentStateIdx = 0
-		g.lastStateTime = time.Time{}
-		g.lastStateTurn = 0
+		g.displayStateIdx = -1
 		g.currentTurn = 0
-		g.tweenStartTime = time.Time{}
+		g.animationStart = time.Time{}
 	}
 
 	// Check if this is a new state
-	if len(g.states) == 0 || g.states[len(g.states)-1].Turn != stateResponse.State.Turn {
+	isNewState := len(g.stateBuffer) == 0 || g.stateBuffer[len(g.stateBuffer)-1].state.Turn != stateResponse.State.Turn
+
+	if isNewState {
+		// Add to buffer with timestamp
+		newBuffer := StateBuffer{
+			state:      stateResponse.State,
+			receivedAt: time.Now(),
+		}
+		g.stateBuffer = append(g.stateBuffer, newBuffer)
+
+		// Keep buffer size limited
+		if len(g.stateBuffer) > stateBufferSize {
+			g.stateBuffer = g.stateBuffer[1:]
+			if g.displayStateIdx > 0 {
+				g.displayStateIdx--
+			}
+		}
+
+		// Also add to states list for compatibility
 		g.states = append(g.states, stateResponse.State)
+		if len(g.states) > stateBufferSize {
+			g.states = g.states[1:]
+		}
 
 		// Initialize cities on first state
 		if len(g.cities) == 0 {
@@ -216,26 +243,7 @@ func (g *Game) pollServerState() error {
 			g.assignPlayerColors()
 		}
 
-		// Update timing info - start a tween to the new server position
-		g.currentStateIdx = len(g.states) - 1
-		g.lastStateTurn = stateResponse.State.Turn
-		g.lastStateTime = time.Now()
-		
-		// Set up tween from current position to server position
-		targetTurn := float64(stateResponse.State.Turn)
-		if g.currentTurn > 0 && math.Abs(targetTurn-g.currentTurn) > 0.01 {
-			// Only tween if there's a meaningful difference
-			g.tweenStartTime = time.Now()
-			g.tweenStartTurn = g.currentTurn
-			g.tweenTargetTurn = targetTurn
-			g.tweenDuration = tweenDuration
-		} else {
-			// First state or no significant difference - snap immediately
-			g.currentTurn = targetTurn
-			g.tweenStartTime = time.Time{}
-		}
-		
-		g.updateDisplayState()
+		log.Printf("Buffered state for turn %d, buffer size: %d", stateResponse.State.Turn, len(g.stateBuffer))
 	}
 
 	return nil
@@ -318,15 +326,15 @@ func (g *Game) Update() error {
 	if !g.isLiveMode {
 		// Replay mode: advance through states automatically
 		elapsed := now.Sub(g.lastUpdate)
-		g.turnProgress = float64(elapsed) / float64(turnDuration)
-		
+		g.turnProgress = float64(elapsed) / float64(turnPlaybackRate)
+
 		// Update continuous current turn for smooth movement
 		if len(g.states) > 0 && g.currentStateIdx < len(g.states) {
 			baseTurn := float64(g.states[g.currentStateIdx].Turn)
 			g.currentTurn = baseTurn + g.turnProgress
 		}
 
-		if elapsed >= turnDuration {
+		if elapsed >= turnPlaybackRate {
 			g.lastUpdate = now
 			g.turnProgress = 0.0
 			g.currentStateIdx++
@@ -335,48 +343,96 @@ func (g *Game) Update() error {
 			}
 			g.updateDisplayState()
 		}
-	} else if g.lastStateTurn > 0 {
-		// Live mode: tween between positions
-		if !g.tweenStartTime.IsZero() {
-			elapsed := now.Sub(g.tweenStartTime)
-			
-			if elapsed >= g.tweenDuration {
-				// Tween complete - continue forward from target
-				g.currentTurn = g.tweenTargetTurn
-				g.tweenStartTime = time.Time{} // Clear tween
-			} else {
-				// Tween in progress - use easing function
-				t := float64(elapsed) / float64(g.tweenDuration)
-				// Use ease-out cubic for smooth deceleration
-				t = 1 - math.Pow(1-t, 3)
-				g.currentTurn = g.tweenStartTurn + (g.tweenTargetTurn-g.tweenStartTurn)*t
-			}
-		}
-		
-		// After tween completes or if no tween, slowly advance
-		if g.tweenStartTime.IsZero() {
-			elapsed := now.Sub(g.lastStateTime).Seconds()
-			// Advance slowly to avoid getting too far ahead
-			estimatedProgress := elapsed / (pollInterval.Seconds() * 3)
-			if estimatedProgress > 0.3 {
-				estimatedProgress = 0.3
-			}
-			g.currentTurn = float64(g.lastStateTurn) + estimatedProgress
-		}
+	} else {
+		// Live mode: use delayed state buffer
+		g.updateLiveMode(now)
 	}
-	
+
 	// Always update movements every frame for smooth animation
 	g.updateMovements()
-	
+
 	return nil
 }
 
-func (g *Game) updateDisplayState() {
-	if g.currentStateIdx >= len(g.states) {
+func (g *Game) updateLiveMode(now time.Time) {
+	// Wait until we have minimum number of states buffered
+	if len(g.stateBuffer) < minBufferStates {
 		return
 	}
 
-	currentState := g.states[g.currentStateIdx]
+	// Start playback if not already started
+	if g.displayStateIdx < 0 {
+		g.displayStateIdx = 0
+		g.currentStateIdx = 0
+		g.animationStart = now
+		g.currentTurn = float64(g.stateBuffer[0].state.Turn)
+		g.updateDisplayState()
+		log.Printf("Started playback from turn %d with %d states buffered",
+			g.stateBuffer[0].state.Turn, len(g.stateBuffer))
+		return
+	}
+
+	// Calculate interpolation progress between current and next state
+	elapsed := now.Sub(g.animationStart)
+
+	// Check if we should move to next state
+	if elapsed >= turnPlaybackRate {
+		// Move to next state pair
+		nextStateIdx := g.displayStateIdx + 1
+
+		if nextStateIdx < len(g.stateBuffer) {
+			g.displayStateIdx = nextStateIdx
+			g.currentStateIdx = nextStateIdx
+			g.animationStart = g.animationStart.Add(turnPlaybackRate)
+			g.updateDisplayState()
+
+			statesAhead := len(g.stateBuffer) - g.displayStateIdx - 1
+			log.Printf("Advanced to turn %d, %d states buffered ahead",
+				g.stateBuffer[nextStateIdx].state.Turn, statesAhead)
+		}
+	}
+
+	// Interpolate between current state and next state
+	if g.displayStateIdx >= 0 && g.displayStateIdx < len(g.stateBuffer) {
+		currentState := g.stateBuffer[g.displayStateIdx].state
+		currentTurn := float64(currentState.Turn)
+
+		// Calculate interpolation factor (0.0 to 1.0)
+		elapsed := now.Sub(g.animationStart)
+		t := float64(elapsed) / float64(turnPlaybackRate)
+		if t > 1.0 {
+			t = 1.0
+		}
+
+		// Apply easing for smooth movement
+		// t = g.easeInOutQuad(t)
+
+		// Interpolate turn number
+		if g.displayStateIdx+1 < len(g.stateBuffer) {
+			nextTurn := float64(g.stateBuffer[g.displayStateIdx+1].state.Turn)
+			g.currentTurn = currentTurn + (nextTurn-currentTurn)*t
+		} else {
+			// No next state, just stay at current
+			g.currentTurn = currentTurn
+		}
+
+		g.turnProgress = t
+	}
+}
+
+func (g *Game) updateDisplayState() {
+	var currentState *api.State
+
+	// Get current state from appropriate source
+	if g.isLiveMode && g.displayStateIdx >= 0 && g.displayStateIdx < len(g.stateBuffer) {
+		currentState = g.stateBuffer[g.displayStateIdx].state
+	} else if !g.isLiveMode && g.currentStateIdx < len(g.states) {
+		currentState = g.states[g.currentStateIdx]
+	} else if len(g.states) > 0 && g.currentStateIdx < len(g.states) {
+		currentState = g.states[g.currentStateIdx]
+	} else {
+		return
+	}
 
 	// Update cities
 	for name, city := range currentState.Cities {
@@ -391,11 +447,18 @@ func (g *Game) updateDisplayState() {
 }
 
 func (g *Game) updateMovements() {
-	if g.currentStateIdx >= len(g.states) {
+	var currentState *api.State
+
+	// Get current state from appropriate source
+	if g.isLiveMode && g.displayStateIdx >= 0 && g.displayStateIdx < len(g.stateBuffer) {
+		currentState = g.stateBuffer[g.displayStateIdx].state
+	} else if !g.isLiveMode && g.currentStateIdx < len(g.states) {
+		currentState = g.states[g.currentStateIdx]
+	} else if len(g.states) > 0 && g.currentStateIdx < len(g.states) {
+		currentState = g.states[g.currentStateIdx]
+	} else {
 		return
 	}
-
-	currentState := g.states[g.currentStateIdx]
 
 	// Update movements
 	g.movements = nil
@@ -447,8 +510,20 @@ func (g *Game) updateMovements() {
 
 // findMovementStartTurn determines when a movement first appeared in the game states
 func (g *Game) findMovementStartTurn(targetMovement *api.Movement) int64 {
-	// Find when this movement first appeared by looking through previous states
-	for _, state := range g.states {
+	// Search in appropriate state source
+	var statesToSearch []*api.State
+
+	if g.isLiveMode {
+		// In live mode, search through buffered states
+		for _, buf := range g.stateBuffer {
+			statesToSearch = append(statesToSearch, buf.state)
+		}
+	} else {
+		statesToSearch = g.states
+	}
+
+	// Find when this movement first appeared by looking through states
+	for _, state := range statesToSearch {
 		for _, movement := range state.Movements {
 			if movement.From == targetMovement.From &&
 				movement.To == targetMovement.To &&
@@ -514,8 +589,17 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	mode := "Replay"
 	if g.isLiveMode {
 		mode = "Live"
-	}
-	if g.currentStateIdx < len(g.states) {
+		if g.displayStateIdx >= 0 && g.displayStateIdx < len(g.stateBuffer) {
+			turn := g.stateBuffer[g.displayStateIdx].state.Turn
+			bufferInfo := fmt.Sprintf(" (buffer: %d/%d, progress: %.0f%%)",
+				g.displayStateIdx+1, len(g.stateBuffer), g.turnProgress*100)
+			ebitenutil.DebugPrint(screen, fmt.Sprintf("Turn: %d [%s]%s", turn, mode, bufferInfo))
+		} else {
+			buffered := len(g.stateBuffer)
+			needed := minBufferStates
+			ebitenutil.DebugPrint(screen, fmt.Sprintf("Buffering... [%s] (%d/%d states)", mode, buffered, needed))
+		}
+	} else if g.currentStateIdx < len(g.states) {
 		turn := g.states[g.currentStateIdx].Turn
 		ebitenutil.DebugPrint(screen, fmt.Sprintf("Turn: %d [%s]", turn, mode))
 	} else {
