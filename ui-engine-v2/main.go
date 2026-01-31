@@ -268,9 +268,9 @@ func (g *Game) initializeCities() {
 		return
 	}
 
-	// Arrange cities in a circle or grid
-	centerX, centerY := float64(g.screenWidth)/2, float64(g.screenHeight)/2
-	radius := float64(min(g.screenWidth, g.screenHeight)) * 0.3
+	// Arrange cities in a circle or grid using logical coordinates (not dynamic screen size)
+	centerX, centerY := float64(screenWidth)/2, float64(screenHeight)/2
+	radius := float64(min(screenWidth, screenHeight)) * 0.3
 
 	i := 0
 	for name := range cities {
@@ -627,6 +627,9 @@ func (g *Game) Draw(screen *ebiten.Image) {
 func (g *Game) drawTroopsAtCity(screen *ebiten.Image, city *CityDisplay, scale float64) {
 	troopTypes := []string{"A", "B", "C"}
 	playerColor := g.playerColors[city.Player]
+	tintR := float64(playerColor.R) / 255.0
+	tintG := float64(playerColor.G) / 255.0
+	tintB := float64(playerColor.B) / 255.0
 
 	for i, troopType := range troopTypes {
 		count := city.Troops[troopType]
@@ -635,9 +638,9 @@ func (g *Game) drawTroopsAtCity(screen *ebiten.Image, city *CityDisplay, scale f
 			offset := (city.Size/2 + 15) * scale
 			troopX := city.X*scale + offset*math.Cos(angle)
 			troopY := city.Y*scale + offset*math.Sin(angle)
-			troopSize := g.calculateTroopSize(count) * scale
 
-			g.drawTroop(screen, troopType, float32(troopX), float32(troopY), float32(troopSize), playerColor)
+			troopSprite := NewTroopSprite(troopType)
+			troopSprite.Draw(screen, int(g.currentTurn), troopX, troopY, scale, tintR, tintG, tintB, 1.0)
 		}
 	}
 }
@@ -650,12 +653,10 @@ func (g *Game) drawMovement(screen *ebiten.Image, movement *MovementDisplay, sca
 	currentX := startX + (endX-startX)*movement.Progress
 	currentY := startY + (endY-startY)*movement.Progress
 
-	// Calculate direction angle for troop orientation
-	dirX := endX - startX
-	dirY := endY - startY
-	angle := math.Atan2(dirY, dirX)
-
 	playerColor := g.playerColors[movement.Player]
+	tintR := float64(playerColor.R) / 255.0
+	tintG := float64(playerColor.G) / 255.0
+	tintB := float64(playerColor.B) / 255.0
 	troopTypes := []string{"A", "B", "C"}
 
 	// Draw troops in formation pointing toward destination
@@ -665,21 +666,19 @@ func (g *Game) drawMovement(screen *ebiten.Image, movement *MovementDisplay, sca
 			// Offset troops slightly to avoid overlap
 			offsetX := currentX + float64((i-1)*8)*scale
 			offsetY := currentY + float64((i-1)*8)*scale
-			troopSize := g.calculateTroopSize(count) * scale
 
-			g.drawOrientedTroop(screen, troopType, float32(offsetX), float32(offsetY), float32(troopSize), float32(angle), playerColor)
+			troopSprite := NewTroopSprite(troopType)
+			troopSprite.Draw(screen, int(g.currentTurn), offsetX, offsetY, scale, tintR, tintG, tintB, 1.0)
 		}
 	}
 }
 
 func (g *Game) drawTroop(screen *ebiten.Image, troopType string, x, y, size float32, playerColor color.RGBA) {
-	g.drawOrientedTroop(screen, troopType, x, y, size, 0, playerColor)
+	// No longer used - kept for compatibility
 }
 
 func (g *Game) drawOrientedTroop(screen *ebiten.Image, troopType string, x, y, size, angle float32, playerColor color.RGBA) {
-	// Draw simple filled rectangles for all troop types
-	halfSize := float64(size / 2)
-	ebitenutil.DrawRect(screen, float64(x)-halfSize, float64(y)-halfSize, float64(size), float64(size), playerColor)
+	// No longer used - kept for compatibility
 }
 
 func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
