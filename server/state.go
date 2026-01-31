@@ -115,10 +115,6 @@ func calculateBattle(attackingTroops, defendingTroops map[string]int64) (attacke
 func (s *server) run(ctx context.Context) {
 	ticker := time.NewTicker(200 * time.Millisecond)
 	for {
-		if s.turnCount > 1000 {
-			return // you really suck at this game if it goes on for more than 1000 turns
-		}
-
 		select {
 		case <-ctx.Done():
 			return
@@ -139,6 +135,10 @@ func (s *server) run(ctx context.Context) {
 		s.actionsLock.Unlock()
 
 		s.stateLock.Lock()
+		if s.turnCount > 1000 {
+			s.stateLock.Unlock()
+			return // you really suck at this game if it goes on for more than 1000 turns
+		}
 		s.turnCount++
 		nextState := processTurn(s.currentState, actions, s.turnCount)
 		s.stateHistory = append(s.stateHistory, s.currentState)
@@ -211,6 +211,10 @@ func processTurn(currentState *api.State, actions map[string]*api.Action, turnCo
 		if !ok {
 			distance = state.Distances[attack.From+attack.To]
 		}
+		if distance == nil {
+			fmt.Printf("no distance found between %s and %s, skipping action\n", attack.From, attack.To)
+			continue
+		}
 
 		newMovement := &api.Movement{
 			Player:       playerID,
@@ -228,7 +232,8 @@ func processTurn(currentState *api.State, actions map[string]*api.Action, turnCo
 			continue
 		}
 		for troopType, amount := range attack.Troops {
-			originCity.Troops[troopType] -= amount
+			newAmount := originCity.Troops[troopType] - amount
+			originCity.Troops[troopType] = max(newAmount, 0)
 		}
 	}
 
@@ -344,14 +349,20 @@ func (s *server) PostAction(ctx context.Context, req *api.PostActionRequest) (*a
 		if attackAction.GetTroops() == nil {
 			return nil, status.Error(codes.InvalidArgument, "troops must be defined")
 		}
-		if currentState.Cities[attackAction.GetFrom()] == nil || currentState.Cities[attackAction.GetTo()] == nil {
+		fromCity := currentState.Cities[attackAction.GetFrom()]
+		toCity := currentState.Cities[attackAction.GetTo()]
+		if fromCity == nil || toCity == nil {
 			return nil, status.Error(codes.InvalidArgument, "invalid from/to city")
+		}
+		// Check ownership of the from city
+		if fromCity.GetPlayer() != player.id {
+			return nil, status.Error(codes.PermissionDenied, "cannot attack from city you don't own")
 		}
 		for troopType, troopAmount := range attackAction.GetTroops() {
 			if _, ok := validTroops[troopType]; !ok {
 				return nil, status.Errorf(codes.InvalidArgument, "invalid troop type: %s", troopType)
 			}
-			if troopAmount <= 0 || currentState.Cities[attackAction.GetFrom()].GetTroops()[troopType] < troopAmount {
+			if troopAmount <= 0 || fromCity.GetTroops()[troopType] < troopAmount {
 				return nil, status.Errorf(codes.InvalidArgument, "invalid troop amount for type %s: %d", troopType, troopAmount)
 			}
 		}
