@@ -44,13 +44,16 @@ func (g *Game) drawBackground(screen *ebiten.Image) {
 	effectiveFrameSize := float64(frameWidth) * 0.8 // 80% after 10% crop on each side
 	scale := float64(g.screenWidth) / effectiveFrameSize
 	
-	// Create custom draw options with dynamic scale
-	img, op := backgroundSprite.selectFrameWithScale(int(g.currentTurn), 0, 0, scale, scale, 1, 1, 1, 1)
+	totalFrames := backgroundSprite.spriteRows * backgroundSprite.spriteColumns
+	currentFrame := int(g.currentTurn) % totalFrames
+	
+	// Draw current frame at full opacity
+	img, op := backgroundSprite.selectFrameWithScale(currentFrame, 0, 0, scale, scale, 1, 1, 1, 1)
 	screen.DrawImage(img, op)
 }
 
-func (g *Game) drawCity(screen *ebiten.Image, city *CityDisplay) {
-	x, y := city.X, city.Y
+func (g *Game) drawCity(screen *ebiten.Image, city *CityDisplay, scale float64) {
+	x, y := city.X*scale, city.Y*scale
 
 	// Get player color for tinting the castle
 	playerColor := g.playerColors[city.Player]
@@ -59,23 +62,24 @@ func (g *Game) drawCity(screen *ebiten.Image, city *CityDisplay) {
 	tintB := float64(playerColor.B) / 255.0
 	tintA := float64(playerColor.A) / 255.0
 
-	// Draw castle sprite at city position with player color tint
-	img, op := castleSprite.selectFrame(int(g.currentTurn), x-float64(castleSprite.frameWidth)/2, y-float64(castleSprite.frameHeight)/2, tintR, tintG, tintB, tintA)
+	// Draw castle sprite at city position with player color tint and scale
+	castleScale := 2.0 * scale // Castles are drawn at 2x base size
+	img, op := castleSprite.selectFrameWithScale(int(g.currentTurn), x-float64(castleSprite.frameWidth)*castleScale/2, y-float64(castleSprite.frameHeight)*castleScale/2, castleScale, castleScale, tintR, tintG, tintB, tintA)
 	screen.DrawImage(img, op)
 
 	// Draw city name above the castle
-	ebitenutil.DebugPrintAt(screen, city.Name, int(x-30), int(y-40))
+	ebitenutil.DebugPrintAt(screen, city.Name, int(x-30*scale), int(y-40*scale))
 
 	// Draw troop counts next to the castle
 	troopTypes := []string{"A", "B", "C"}
-	yOffset := int(y) - 20
+	yOffset := int(y) - int(20*scale)
 	for _, troopType := range troopTypes {
 		count := city.Troops[troopType]
 		text := fmt.Sprintf("%s:%d", troopType, count)
-		ebitenutil.DebugPrintAt(screen, text, int(x+25), yOffset)
-		yOffset += 12
+		ebitenutil.DebugPrintAt(screen, text, int(x+25*scale), yOffset)
+		yOffset += int(12 * scale)
 	}
 
 	// Draw troops around the city
-	g.drawTroopsAtCity(screen, city)
+	g.drawTroopsAtCity(screen, city, scale)
 }

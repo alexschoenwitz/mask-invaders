@@ -589,14 +589,17 @@ func (g *Game) Draw(screen *ebiten.Image) {
 
 	g.drawBackground(screen)
 
+	// Calculate scale factor for game elements
+	scale := float64(g.screenWidth) / float64(screenWidth)
+
 	// Draw cities
 	for _, city := range g.cities {
-		g.drawCity(screen, city)
+		g.drawCity(screen, city, scale)
 	}
 
 	// Draw movements
 	for _, movement := range g.movements {
-		g.drawMovement(screen, movement)
+		g.drawMovement(screen, movement, scale)
 	}
 
 	// Draw turn counter and mode
@@ -621,7 +624,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	}
 }
 
-func (g *Game) drawTroopsAtCity(screen *ebiten.Image, city *CityDisplay) {
+func (g *Game) drawTroopsAtCity(screen *ebiten.Image, city *CityDisplay, scale float64) {
 	troopTypes := []string{"A", "B", "C"}
 	playerColor := g.playerColors[city.Player]
 
@@ -629,20 +632,20 @@ func (g *Game) drawTroopsAtCity(screen *ebiten.Image, city *CityDisplay) {
 		count := city.Troops[troopType]
 		if count > 0 {
 			angle := 2 * math.Pi * float64(i) / 3 // Distribute around city
-			offset := city.Size/2 + 15
-			troopX := city.X + offset*math.Cos(angle)
-			troopY := city.Y + offset*math.Sin(angle)
-			troopSize := g.calculateTroopSize(count)
+			offset := (city.Size/2 + 15) * scale
+			troopX := city.X*scale + offset*math.Cos(angle)
+			troopY := city.Y*scale + offset*math.Sin(angle)
+			troopSize := g.calculateTroopSize(count) * scale
 
 			g.drawTroop(screen, troopType, float32(troopX), float32(troopY), float32(troopSize), playerColor)
 		}
 	}
 }
 
-func (g *Game) drawMovement(screen *ebiten.Image, movement *MovementDisplay) {
+func (g *Game) drawMovement(screen *ebiten.Image, movement *MovementDisplay, scale float64) {
 	// Calculate current position
-	startX, startY := movement.From.X, movement.From.Y
-	endX, endY := movement.To.X, movement.To.Y
+	startX, startY := movement.From.X*scale, movement.From.Y*scale
+	endX, endY := movement.To.X*scale, movement.To.Y*scale
 
 	currentX := startX + (endX-startX)*movement.Progress
 	currentY := startY + (endY-startY)*movement.Progress
@@ -660,9 +663,9 @@ func (g *Game) drawMovement(screen *ebiten.Image, movement *MovementDisplay) {
 		count := movement.Troops[troopType]
 		if count > 0 {
 			// Offset troops slightly to avoid overlap
-			offsetX := currentX + float64((i-1)*8)
-			offsetY := currentY + float64((i-1)*8)
-			troopSize := g.calculateTroopSize(count)
+			offsetX := currentX + float64((i-1)*8)*scale
+			offsetY := currentY + float64((i-1)*8)*scale
+			troopSize := g.calculateTroopSize(count) * scale
 
 			g.drawOrientedTroop(screen, troopType, float32(offsetX), float32(offsetY), float32(troopSize), float32(angle), playerColor)
 		}
