@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -23,6 +24,12 @@ const (
 	troopC = "C"
 )
 
+var attemptStart = flag.Bool("s", false, "flag to try to start the game")
+
+func init() {
+	flag.Parse()
+}
+
 func main() {
 	// 1. Register the bot
 	token, playerID, err := register()
@@ -31,25 +38,30 @@ func main() {
 	}
 	log.Printf("Registered with token: %s, playerID: %s", token, playerID)
 
-	// 2. Try to start the game for 2 minutes
 	client := &http.Client{Timeout: 10 * time.Second}
-	gameStarted := false
-	startTime := time.Now()
+	fmt.Println(attemptStart)
+	fmt.Println(*attemptStart)
+	if *attemptStart {
+		print("hello")
+		// 2. Try to start the game for 2 minutes
+		gameStarted := false
+		startTime := time.Now()
 
-	for time.Since(startTime) < 2*time.Minute {
-		err := startGame(client, token)
-		if err == nil {
-			log.Println("Game started successfully!")
-			gameStarted = true
-			break
+		for time.Since(startTime) < 2*time.Minute {
+			err := startGame(client, token)
+			if err == nil {
+				log.Println("Game started successfully!")
+				gameStarted = true
+				break
+			}
+			log.Printf("Failed to start game: %v. Retrying in 1 seconds...", err)
+			time.Sleep(1 * time.Second)
 		}
-		log.Printf("Failed to start game: %v. Retrying in 1 seconds...", err)
-		time.Sleep(1 * time.Second)
-	}
 
-	if !gameStarted {
-		log.Println("Failed to start game within 2 minutes. Giving up.")
-		return
+		if !gameStarted {
+			log.Println("Failed to start game within 2 minutes. Giving up.")
+			return
+		}
 	}
 
 	// 3. Play the game with the clever strategy
@@ -109,6 +121,26 @@ func startGame(client *http.Client, token string) error {
 }
 
 func playGame(client *http.Client, token, playerID string) {
+	log.Println("Waiting for game to start...")
+
+	// Wait for the game to start
+	for {
+		state, err := getGameState(client, token)
+		if err != nil {
+			log.Printf("Failed to get game state: %v", err)
+			time.Sleep(1 * time.Second)
+			continue
+		}
+
+		if state != nil && state.Turn > 0 {
+			log.Printf("Game started at turn %d!", state.Turn)
+			break
+		}
+
+		log.Println("Game not started yet, waiting...")
+		time.Sleep(1 * time.Second)
+	}
+
 	log.Println("Starting game loop with clever strategy...")
 
 	for {

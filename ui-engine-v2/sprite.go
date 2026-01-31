@@ -69,7 +69,6 @@ func (s *Sprite) selectFrame(gameTick int, x, y float64) (*ebiten.Image, *ebiten
 
 	// Draw the specific frame "slice"
 	return s.image.SubImage(image.Rect(sx, sy, sx+s.frameWidth, sy+s.frameHeight)).(*ebiten.Image), op
-
 }
 
 func minSpeed(speed int) int {

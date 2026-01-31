@@ -3,9 +3,9 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"image"
 	"log"
 
-	"image"
 	_ "image/png"
 
 	"github.com/hajimehoshi/ebiten/v2"
