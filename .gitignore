@@ -1,3 +1,5 @@
 *.pb.go
 *.pb.*.go
 gamehistory.json
+# ignore possible binaries
+ui-engine-v2/ui-engine-v2
