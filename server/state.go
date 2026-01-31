@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -142,28 +144,44 @@ func (s *server) run(ctx context.Context) {
 		s.stateHistory = append(s.stateHistory, s.currentState)
 		s.currentState = nextState
 		s.currentState.Turn = s.turnCount
+		victory := s.checkWinCondition()
 		s.stateLock.Unlock()
+
+		if victory {
+			time.Sleep(2 * time.Second) // be nice enough for players to be able to read the victory state
+			s.shutdown()
+		}
 	}
 }
 
-func processTurn(currentState *api.State, actions map[string]*api.Action, turnCount int64) *api.State {
-	newState := &api.State{
-		Cities:    make(map[string]*api.City),
-		Movements: []*api.Movement{},
-		Distances: currentState.Distances, // WARN: if distances are variable, this will need to be cloned
+// check victory condition: all cities owned by one player
+func (s *server) checkWinCondition() bool {
+	victor := ""
+	for _, city := range s.currentState.Cities {
+		if victor == "" {
+			victor = city.Player
+		} else if victor != city.Player {
+			return false
+		}
 	}
-	currentStateCopy := proto.CloneOf(currentState)
+	fmt.Printf("Player %s has won the game in %d turns!\n", victor, s.turnCount)
+	// write down history in json
+	b, _ := json.Marshal(s.stateHistory)
+	_ = os.WriteFile("gamehistory.json", b, 0o600)
+	return true
+}
+
+func processTurn(currentState *api.State, actions map[string]*api.Action, turnCount int64) *api.State {
+	state := proto.CloneOf(currentState)
 
 	// first process movements
-	for _, movement := range currentStateCopy.Movements {
+	for _, movement := range state.Movements {
 		if movement.ArrivingTurn < int64(turnCount) {
-			// still in transit
-			newState.Movements = append(newState.Movements, movement)
 			continue
 		}
 
 		// arrive at destination
-		city := currentStateCopy.Cities[movement.To]
+		city := state.Cities[movement.To]
 		if city == nil {
 			fmt.Printf("this should not happen, troops will just disappear")
 			continue
@@ -177,7 +195,6 @@ func processTurn(currentState *api.State, actions map[string]*api.Action, turnCo
 		} else {
 			city.Troops = survivingTroops
 		}
-		newState.Cities[movement.To] = city
 	}
 
 	// then process actions
@@ -187,9 +204,9 @@ func processTurn(currentState *api.State, actions map[string]*api.Action, turnCo
 		}
 		attack := action.GetAttack()
 		// create a new movement
-		distance, ok := currentStateCopy.Distances[attack.To+attack.From]
+		distance, ok := state.Distances[attack.To+attack.From]
 		if !ok {
-			distance = currentStateCopy.Distances[attack.From+attack.To]
+			distance = state.Distances[attack.From+attack.To]
 		}
 
 		newMovement := &api.Movement{
@@ -199,10 +216,10 @@ func processTurn(currentState *api.State, actions map[string]*api.Action, turnCo
 			Troops:       attack.Troops,
 			ArrivingTurn: turnCount + distance.Distance, // TODO: consider speed factors
 		}
-		newState.Movements = append(newState.Movements, newMovement)
+		state.Movements = append(state.Movements, newMovement)
 
 		// remove troops from the origin city
-		originCity := currentStateCopy.Cities[attack.From]
+		originCity := state.Cities[attack.From]
 		if originCity == nil {
 			fmt.Printf("this should not happen, troops will just disappear")
 			continue
@@ -210,17 +227,9 @@ func processTurn(currentState *api.State, actions map[string]*api.Action, turnCo
 		for troopType, ammount := range attack.Troops {
 			originCity.Troops[troopType] -= ammount
 		}
-		newState.Cities[attack.From] = originCity
 	}
 
-	// finally, copy over unchanged cities
-	for cityName, city := range currentStateCopy.Cities {
-		if newState.Cities[cityName] == nil {
-			newState.Cities[cityName] = city
-		}
-	}
-
-	return newState
+	return state
 }
 
 func (s *server) StartGame(ctx context.Context, req *api.StartGameRequest) (*api.StartGameResponse, error) {

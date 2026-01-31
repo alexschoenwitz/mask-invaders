@@ -36,6 +36,8 @@ type server struct {
 
 	turnCount   int64
 	gameStarted atomic.Bool // locked once started
+
+	shutdown func()
 }
 
 func main() {
@@ -52,6 +54,7 @@ func main() {
 		submittedActions: make(map[string]*api.Action),
 		actionQueue:      make(chan *api.Action, 100),
 		players:          make(map[string]*player),
+		shutdown:         cancel,
 	}
 	go s.run(ctx)
 	api.RegisterServerServer(grpcServer, s)
@@ -94,7 +97,10 @@ func main() {
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
+	select {
+	case <-quit:
+	case <-ctx.Done():
+	}
 
 	log.Println("shutting down servers...")
 
