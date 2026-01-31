@@ -10,4 +10,10 @@ var (
 
 	//go:embed gopher.png
 	Gopher_png []byte
+
+	//go:embed castle.png
+	Castle_png []byte
+
+	//go:embed down-of-day.png
+	DownOfDay_png []byte
 )

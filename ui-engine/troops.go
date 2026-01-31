@@ -6,6 +6,7 @@ import (
 	"image"
 	_ "image/png"
 	"log"
+	"math"
 
 	"github.com/alexschoenwitz/mask-invaders/ui-engine/resources"
 
@@ -43,28 +44,29 @@ const (
 type Troop struct {
 	game          *Game
 	image         *ebiten.Image
-	op            *ebiten.DrawImageOptions
 	numerOfFrames int
 	frameCounter  int
 
 	width, height int
 
 	//arriveTurn int
-	pos_x, pos_y float64
-	alive        bool
+	posX, posY        float64
+	targetX, target_y float64
+	alive             bool
 }
 
-func NewTroop(g *Game, t troopType, x, y float64) *Troop {
+func NewTroop(g *Game, t troopType, x, y float64, targetX, targetY float64) *Troop {
 	var troop *Troop
 	switch t {
 	case Gopher:
 		w, h := gopherImage.Bounds().Dx(), gopherImage.Bounds().Dy()
 		troop = &Troop{
 			image:         gopherImage,
-			op:            &ebiten.DrawImageOptions{},
 			numerOfFrames: 1,
-			pos_x:         x,
-			pos_y:         y,
+			posX:          x,
+			posY:          y,
+			targetX:       targetX,
+			target_y:      targetY,
 			alive:         true,
 			width:         w,
 			height:        h,
@@ -74,10 +76,11 @@ func NewTroop(g *Game, t troopType, x, y float64) *Troop {
 		w, h := archerImage.Bounds().Dx(), archerImage.Bounds().Dy()
 		troop = &Troop{
 			image:         archerImage,
-			op:            &ebiten.DrawImageOptions{},
 			numerOfFrames: 8,
-			pos_x:         x,
-			pos_y:         y,
+			posX:          x,
+			posY:          y,
+			targetX:       targetX,
+			target_y:      targetY,
 			alive:         true,
 			width:         w / 8, // divide sprite by number of frames
 			height:        h,
@@ -89,19 +92,35 @@ func NewTroop(g *Game, t troopType, x, y float64) *Troop {
 
 func (t *Troop) Draw(screen *ebiten.Image) {
 	fmt.Println(t.width, t.height)
-	t.op.GeoM.Translate(-float64(t.width)/2, -float64(t.height)/2)
-	t.op.GeoM.Translate(20, float64(t.game.screenHeight/2))
+	op := &ebiten.DrawImageOptions{}
+	op.GeoM.Scale(0.7, 0.7)
+
+	op.GeoM.Translate(-float64(t.width)/2, -float64(t.height)/2)
+	op.GeoM.Translate(t.posX, t.posY)
 
 	// Calculate which frame to show
-	i := t.game.tickCounter % t.numerOfFrames //consider making slower by diving the counter
+	i := (t.game.tickCounter / t.numerOfFrames) % t.numerOfFrames //consider making slower by diving the counter
 	fmt.Println("Some: ", i)
-	sx, sy := 50, 50
+	sx, sy := i*t.width, 0
 
 	// Draw the specific frame "slice"
 	sub := t.image.SubImage(image.Rect(sx, sy, sx+t.width, sy+t.height)).(*ebiten.Image)
-	screen.DrawImage(sub, t.op)
+	screen.DrawImage(sub, op)
 }
 
 func (t *Troop) Update( /*add game*/ ) error {
+	t.moveTo(t.targetX, t.target_y)
 	return nil
+}
+
+func (t *Troop) moveTo(targetX, targetY float64) {
+	dx := targetX - t.posX
+	dy := targetY - t.posY
+
+	distance := math.Sqrt(dx*dx + dy*dy)
+
+	if distance > 1 {
+		t.posX += (dx / distance) * 1
+		t.posY += (dy / distance) * 1
+	}
 }

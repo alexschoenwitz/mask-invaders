@@ -18,11 +18,17 @@ func main() {
 		objects:      []gameObjects{},
 	}
 
-	t := NewTroop(game, Gopher, 100, 100)
+	t := NewTroop(game, Gopher, 100, 100, 43, 55)
+	t2 := NewTroop(game, Gopher, 150, 150, 550, 340)
+	t3 := NewTroop(game, Archer, 200, 200, 630, 620)
 
-	game.objects = append(game.objects, t)
+	c1 := NewCastle(game, 43, 55)
+	c2 := NewCastle(game, 550, 340)
+	c3 := NewCastle(game, 630, 620)
 
-	ebiten.SetTPS(1)
+	game.objects = append(game.objects, t, t2, t3, c1, c2, c3)
+
+	ebiten.SetTPS(30)
 	ebiten.SetWindowSize(game.screenWidth, game.screenHeight)
 	ebiten.SetWindowTitle("Mask invaders")
 
