@@ -68,7 +68,8 @@ message State {
 }
 
 message Mine {
-  map<string, Resource> resources = 1;
+  string id = 1;
+  map<string, Resource> resources = 2;
 }
 
 message Resource {
@@ -76,9 +77,10 @@ message Resource {
 }
 
 message City {
-  string player = 1;
-  map<string, int64> troops = 2;
-  map<string, Resource> resources = 3;
+  string id = 1;
+  string player = 2;
+  map<string, int64> troops = 3;
+  map<string, Resource> resources = 4;
 }
 
 message Movement {
@@ -106,6 +108,7 @@ message Action {
     Attack attack = 3;
     None none = 4;
     CreateTroop create_troop = 5;
+    ClaimMine claim_mine = 6;
   }
 }
 
@@ -113,6 +116,11 @@ message Attack {
   string from = 1;
   string to = 2;
   map<string, int64> troops = 3;
+}
+
+message ClaimMine {
+  string from = 1;
+  string mine = 2;
 }
 
 message None {}
