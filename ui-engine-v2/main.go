@@ -469,42 +469,47 @@ func (g *Game) updateMovements() {
 
 	for _, movement := range currentState.Movements {
 		fromCity, fromExists := g.cities[movement.From]
-		toCity, toExists := g.cities[movement.To]
+		switch to := movement.To.(type) {
+		case *api.Movement_City:
+			toCity, toExists := g.cities[to.City]
 
-		if fromExists && toExists {
-			// Calculate movement start time (when it was created)
-			startTurn := g.findMovementStartTurn(movement)
+			if fromExists && toExists {
+				// Calculate movement start time (when it was created)
+				startTurn := g.findMovementStartTurn(movement)
 
-			// Calculate smooth progress based on continuous time
-			totalDuration := float64(movement.ArrivingTurn - startTurn)
-			var progress float64
-			if totalDuration > 0 {
-				elapsed := currentTime - float64(startTurn)
-				progress = elapsed / totalDuration
-			} else {
-				progress = 0.0
-			}
+				// Calculate smooth progress based on continuous time
+				totalDuration := float64(movement.ArrivingTurn - startTurn)
+				var progress float64
+				if totalDuration > 0 {
+					elapsed := currentTime - float64(startTurn)
+					progress = elapsed / totalDuration
+				} else {
+					progress = 0.0
+				}
 
-			// Clamp progress
-			if progress > 1.0 {
-				progress = 1.0
-			}
-			if progress < 0.0 {
-				progress = 0.0
-			}
+				// Clamp progress
+				if progress > 1.0 {
+					progress = 1.0
+				}
+				if progress < 0.0 {
+					progress = 0.0
+				}
 
-			// Only show movements that are in progress
-			if progress >= 0.0 && progress <= 1.0 {
-				g.movements = append(g.movements, &MovementDisplay{
-					From:         fromCity,
-					To:           toCity,
-					Troops:       movement.Troops,
-					Player:       movement.Player,
-					StartTurn:    startTurn,
-					ArrivingTurn: movement.ArrivingTurn,
-					Progress:     progress,
-				})
+				// Only show movements that are in progress
+				if progress >= 0.0 && progress <= 1.0 {
+					g.movements = append(g.movements, &MovementDisplay{
+						From:         fromCity,
+						To:           toCity,
+						Troops:       movement.Troops,
+						Player:       movement.Player,
+						StartTurn:    startTurn,
+						ArrivingTurn: movement.ArrivingTurn,
+						Progress:     progress,
+					})
+				}
 			}
+		case *api.Movement_Mine:
+			// Currently ignoring mine movements for display
 		}
 	}
 }

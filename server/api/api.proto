@@ -86,7 +86,10 @@ message City {
 
 message Movement {
   string from = 1;
-  string to = 2;
+  oneof to {
+    string city = 2;
+    string mine = 6;
+  }
   map<string, int64> troops = 3;
   int64 arriving_turn = 4;
   string player = 5;
@@ -109,19 +112,16 @@ message Action {
     Attack attack = 3;
     None none = 4;
     CreateTroop create_troop = 5;
-    ClaimMine claim_mine = 6;
   }
 }
 
 message Attack {
   string from = 1;
-  string to = 2;
+  oneof to {
+    string city = 2;
+    string mine = 4;
+  }
   map<string, int64> troops = 3;
-}
-
-message ClaimMine {
-  string from = 1;
-  string mine = 2;
 }
 
 message None {}

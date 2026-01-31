@@ -221,19 +221,25 @@ func processTurn(currentState *api.State, actions map[string]map[string]*api.Act
 		}
 
 		// arrive at destination
-		city := state.Cities[movement.To]
-		if city == nil {
-			fmt.Printf("this should not happen, troops will just disappear")
-			continue
-		}
-
-		// Battle!
-		attackerWins, survivingTroops := calculateBattle(movement.Troops, city.Troops)
-		if attackerWins {
-			city.Player = movement.Player
-			city.Troops = survivingTroops
-		} else {
-			city.Troops = survivingTroops
+		switch to := movement.To.(type) {
+		case *api.Movement_City:
+			city := state.Cities[to.City]
+			if city == nil {
+				fmt.Printf("this should not happen, troops will just disappear")
+				continue
+			}
+			// Battle!
+			attackerWins, survivingTroops := calculateBattle(movement.Troops, city.Troops)
+			if attackerWins {
+				city.Player = movement.Player
+				city.Troops = survivingTroops
+			} else {
+				city.Troops = survivingTroops
+			}
+		case *api.Movement_Mine:
+			// currently nothing happens when arriving at a mine
+		default:
+			fmt.Printf("unknown movement destination type, troops will just disappear\n")
 		}
 	}
 	state.Movements = remainingMovements
@@ -258,19 +264,21 @@ func processTurn(currentState *api.State, actions map[string]map[string]*api.Act
 			}
 
 			// create a new movement
-			distance, ok := state.Distances[attack.To+attack.From]
+			distance, ok := state.Distances[attack.GetCity()+attack.From]
 			if !ok {
-				distance = state.Distances[attack.From+attack.To]
+				distance = state.Distances[attack.From+attack.GetCity()]
 			}
 			if distance == nil {
-				fmt.Printf("no distance found between %s and %s, skipping action\n", attack.From, attack.To)
+				fmt.Printf("no distance found between %s and %s, skipping action\n", attack.From, attack.GetCity())
 				continue
 			}
 
 			newMovement := &api.Movement{
-				Player:       playerID,
-				From:         attack.From,
-				To:           attack.To,
+				Player: playerID,
+				From:   attack.From,
+				To: &api.Movement_City{
+					City: attack.GetTo().(*api.Attack_City).City,
+				},
 				Troops:       attack.Troops,
 				ArrivingTurn: turnCount + distance.Distance,
 			}
@@ -455,22 +463,51 @@ func (s *server) PostAction(ctx context.Context, req *api.PostActionRequest) (*a
 			return nil, status.Error(codes.InvalidArgument, "troops must be defined")
 		}
 		fromCity := currentState.Cities[attackAction.GetFrom()]
-		toCity := currentState.Cities[attackAction.GetTo()]
-		if fromCity == nil || toCity == nil {
-			return nil, status.Error(codes.InvalidArgument, "invalid from/to city")
-		}
-		// Check ownership of the from city
-		if fromCity.GetPlayer() != player.id {
-			return nil, status.Error(codes.PermissionDenied, "cannot attack from city you don't own")
-		}
-		for troopType, troopAmount := range attackAction.GetTroops() {
-			if _, ok := validTroops[troopType]; !ok {
-				return nil, status.Errorf(codes.InvalidArgument, "invalid troop type: %s", troopType)
+		switch to := attackAction.GetTo().(type) {
+		case *api.Attack_City:
+			toCity := currentState.Cities[to.City]
+			if fromCity == nil || toCity == nil {
+				return nil, status.Error(codes.InvalidArgument, "invalid from/to city")
 			}
-			if troopAmount <= 0 || fromCity.GetTroops()[troopType] < troopAmount {
-				return nil, status.Errorf(codes.InvalidArgument, "invalid troop amount for type %s: %d", troopType, troopAmount)
+			// Check ownership of the from city
+			if fromCity.GetPlayer() != player.id {
+				return nil, status.Error(codes.PermissionDenied, "cannot attack from city you don't own")
 			}
+			for troopType, troopAmount := range attackAction.GetTroops() {
+				if _, ok := validTroops[troopType]; !ok {
+					return nil, status.Errorf(codes.InvalidArgument, "invalid troop type: %s", troopType)
+				}
+				if troopAmount <= 0 || fromCity.GetTroops()[troopType] < troopAmount {
+					return nil, status.Errorf(codes.InvalidArgument, "invalid troop amount for type %s: %d", troopType, troopAmount)
+				}
+			}
+		case *api.Attack_Mine:
+			// check mine existence and update claimed status
+			mine, ok := currentState.Mines[to.Mine]
+			if !ok {
+				return nil, status.Error(codes.InvalidArgument, "invalid mine")
+			}
+			if mine.GetClaimed() {
+				return nil, status.Error(codes.PermissionDenied, "mine already claimed")
+			}
+			mine.Claimed = true
+			// add mine resources to player's city
+			city, ok := currentState.Cities[attackAction.GetFrom()]
+			if !ok || city.Player != player.id {
+				return nil, status.Error(codes.PermissionDenied, "city not owned")
+			}
+			for resourceType, resource := range mine.GetResources() {
+				cityResources, ok := city.Resources[resourceType]
+				if !ok {
+					cityResources = &api.Resource{Amount: 0}
+					city.Resources[resourceType] = cityResources
+				}
+				cityResources.Amount += resource.GetAmount()
+			}
+		default:
+			// valid
 		}
+
 	case *api.Action_CreateTroop:
 		createTroopAction := req.GetAction().GetCreateTroop()
 		if _, ok := validTroops[createTroopAction.GetType()]; !ok {
@@ -483,30 +520,6 @@ func (s *server) PostAction(ctx context.Context, req *api.PostActionRequest) (*a
 		// Don't modify state here anymore - will be done in processTurn
 		c.Troops[createTroopAction.GetType()] += 1
 	case *api.Action_None:
-	case *api.Action_ClaimMine:
-		claimMineAction := req.GetAction().GetClaimMine()
-		// check mine existence and update claimed status
-		mine, ok := currentState.Mines[claimMineAction.GetMine()]
-		if !ok {
-			return nil, status.Error(codes.InvalidArgument, "invalid mine")
-		}
-		if mine.GetClaimed() {
-			return nil, status.Error(codes.PermissionDenied, "mine already claimed")
-		}
-		mine.Claimed = true
-		// add mine resources to player's city
-		city, ok := currentState.Cities[claimMineAction.GetFrom()]
-		if !ok || city.Player != player.id {
-			return nil, status.Error(codes.PermissionDenied, "city not owned")
-		}
-		for resourceType, resource := range mine.GetResources() {
-			cityResources, ok := city.Resources[resourceType]
-			if !ok {
-				cityResources = &api.Resource{Amount: 0}
-				city.Resources[resourceType] = cityResources
-			}
-			cityResources.Amount += resource.GetAmount()
-		}
 	default:
 		return nil, status.Error(codes.InvalidArgument, "unknown action type")
 	}

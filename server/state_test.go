@@ -23,14 +23,16 @@ func TestProcessTurn_MissingDistance(t *testing.T) {
 		Movements: []*api.Movement{},
 	}
 
-	actions := map[string]*api.Action{
+	actions := map[string]map[string]*api.Action{
 		"player1": {
-			Player: "player1",
-			Action: &api.Action_Attack{
-				Attack: &api.Attack{
-					From:   "city1",
-					To:     "city2",
-					Troops: map[string]int64{"A": 5},
+			"city1": {
+				Player: "player1",
+				Action: &api.Action_Attack{
+					Attack: &api.Attack{
+						From:   "city1",
+						To:     &api.Attack_City{City: "city2"},
+						Troops: map[string]int64{"A": 5},
+					},
 				},
 			},
 		},
@@ -64,14 +66,16 @@ func TestProcessTurn_NegativeTroopCounts(t *testing.T) {
 	}
 
 	// Two actions trying to send more troops than available
-	actions := map[string]*api.Action{
+	actions := map[string]map[string]*api.Action{
 		"player1": {
-			Player: "player1",
-			Action: &api.Action_Attack{
-				Attack: &api.Attack{
-					From:   "city1",
-					To:     "city2",
-					Troops: map[string]int64{"A": 8},
+			"city1": {
+				Player: "player1",
+				Action: &api.Action_Attack{
+					Attack: &api.Attack{
+						From:   "city1",
+						To:     &api.Attack_City{City: "city2"},
+						Troops: map[string]int64{"A": 8},
+					},
 				},
 			},
 		},
@@ -81,14 +85,16 @@ func TestProcessTurn_NegativeTroopCounts(t *testing.T) {
 	nextState := processTurn(currentState, actions, 1)
 
 	// Try another attack with remaining troops
-	actions2 := map[string]*api.Action{
+	actions2 := map[string]map[string]*api.Action{
 		"player1": {
-			Player: "player1",
-			Action: &api.Action_Attack{
-				Attack: &api.Attack{
-					From:   "city1",
-					To:     "city2",
-					Troops: map[string]int64{"A": 8}, // Only 2 left, but asking for 8
+			"city1": {
+				Player: "player1",
+				Action: &api.Action_Attack{
+					Attack: &api.Attack{
+						From:   "city1",
+						To:     &api.Attack_City{City: "city2"},
+						Troops: map[string]int64{"A": 8}, // Only 2 left, but asking for 8
+					},
 				},
 			},
 		},
@@ -144,7 +150,7 @@ func TestPostAction_NoOwnershipCheck(t *testing.T) {
 			Action: &api.Action_Attack{
 				Attack: &api.Attack{
 					From:   "city1", // player1 doesn't own this
-					To:     "city2",
+					To:     &api.Attack_City{City: "city2"},
 					Troops: map[string]int64{"A": 5},
 				},
 			},
@@ -168,7 +174,7 @@ func TestPostAction_NoOwnershipCheck(t *testing.T) {
 func TestResetGame_RaceCondition(t *testing.T) {
 	s := &server{
 		players:          map[string]*player{"token1": {id: "player1"}},
-		submittedActions: map[string]*api.Action{},
+		submittedActions: map[string]map[string]*api.Action{},
 		actionQueue:      make(chan *api.Action, 10),
 		currentState: &api.State{
 			Cities:    map[string]*api.City{},
@@ -217,7 +223,7 @@ func TestRun_TurnCountRaceCondition(t *testing.T) {
 			"token1": {id: "player1"},
 			"token2": {id: "player2"},
 		},
-		submittedActions: map[string]*api.Action{},
+		submittedActions: map[string]map[string]*api.Action{},
 		actionQueue:      make(chan *api.Action, 10),
 		currentState: &api.State{
 			Cities: map[string]*api.City{
@@ -336,7 +342,7 @@ func TestPostAction_ConcurrentAccess(t *testing.T) {
 			token := "token" + string(rune('0'+playerNum))
 			player := "player" + string(rune('0'+playerNum))
 			from := "city" + string(rune('0'+playerNum))
-			to := "city" + string(rune('0'+(3-playerNum)))
+			toCity := "city" + string(rune('0'+(3-playerNum)))
 
 			ctx := context.WithValue(context.Background(), playerTokenKey, token)
 
@@ -346,7 +352,7 @@ func TestPostAction_ConcurrentAccess(t *testing.T) {
 					Action: &api.Action_Attack{
 						Attack: &api.Attack{
 							From:   from,
-							To:     to,
+							To:     &api.Attack_City{City: toCity},
 							Troops: map[string]int64{"A": 1},
 						},
 					},
@@ -372,7 +378,7 @@ func TestProcessTurn_DistanceBothDirections(t *testing.T) {
 		name           string
 		distances      map[string]*api.Distance
 		from           string
-		to             string
+		city           string
 		expectMovement bool
 		expectedTroops int64
 	}{
@@ -380,7 +386,7 @@ func TestProcessTurn_DistanceBothDirections(t *testing.T) {
 			name:           "forward direction exists",
 			distances:      map[string]*api.Distance{"city1city2": {Distance: 5}},
 			from:           "city1",
-			to:             "city2",
+			city:           "city2",
 			expectMovement: true,
 			expectedTroops: 5,
 		},
@@ -388,7 +394,7 @@ func TestProcessTurn_DistanceBothDirections(t *testing.T) {
 			name:           "backward direction exists",
 			distances:      map[string]*api.Distance{"city2city1": {Distance: 5}},
 			from:           "city1",
-			to:             "city2",
+			city:           "city2",
 			expectMovement: true,
 			expectedTroops: 5,
 		},
@@ -396,7 +402,7 @@ func TestProcessTurn_DistanceBothDirections(t *testing.T) {
 			name:           "no direction exists",
 			distances:      map[string]*api.Distance{},
 			from:           "city1",
-			to:             "city2",
+			city:           "city2",
 			expectMovement: false,
 			expectedTroops: 10, // Troops should not be deducted
 		},
@@ -413,14 +419,16 @@ func TestProcessTurn_DistanceBothDirections(t *testing.T) {
 				Movements: []*api.Movement{},
 			}
 
-			actions := map[string]*api.Action{
+			actions := map[string]map[string]*api.Action{
 				"player1": {
-					Player: "player1",
-					Action: &api.Action_Attack{
-						Attack: &api.Attack{
-							From:   tt.from,
-							To:     tt.to,
-							Troops: map[string]int64{"A": 5},
+					tt.from: {
+						Player: "player1",
+						Action: &api.Action_Attack{
+							Attack: &api.Attack{
+								From:   tt.from,
+								To:     &api.Attack_City{City: tt.city},
+								Troops: map[string]int64{"A": 5},
+							},
 						},
 					},
 				},

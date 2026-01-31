@@ -84,12 +84,12 @@ func playGame(client *client.Client, playerID string) {
 		// NEW: Take action for each city
 		for _, cityName := range myCities {
 			city := state.Cities[cityName]
-			
+
 			if !hasTroops(city) {
 				log.Printf("City %s has no troops, skipping", cityName)
 				continue
 			}
-			
+
 			// Find the nearest enemy city to attack from this city
 			attackTo := findNearestEnemyFrom(cityName, enemyCities, state)
 			if attackTo == "" {
@@ -104,7 +104,7 @@ func playGame(client *client.Client, playerID string) {
 					Action: &api.Action_Attack{
 						Attack: &api.Attack{
 							From:   cityName,
-							To:     attackTo,
+							To:     &api.Attack_City{City: attackTo},
 							Troops: city.Troops,
 						},
 					},

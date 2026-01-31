@@ -19,8 +19,7 @@ const (
 Usage:
 	register <username>
 	getstate
-	attack <from_city_id> <to_city_id> <A:x,B:y,C:z>
-	claimMine <from_city_id> <mine_id>
+	attack <from_city_id> <attack_type> <to_city_id> <A:x,B:y,C:z>
 	noop
 `
 )
@@ -89,8 +88,9 @@ func main() {
 				continue
 			}
 			fromCityID := parts[1]
-			toCityID := parts[2]
-			troopStr := parts[3]
+			attackType := parts[2]
+			toID := parts[3]
+			troopStr := parts[4]
 			troops := make(map[string]int64)
 			troopParts := strings.Split(troopStr, ",")
 			for _, tp := range troopParts {
@@ -106,46 +106,46 @@ func main() {
 				}
 				troops[kv[0]] = count
 			}
-			req := &api.PostActionRequest{
-				Action: &api.Action{
-					Player: playerID,
-					Action: &api.Action_Attack{
-						Attack: &api.Attack{
-							From:   fromCityID,
-							To:     toCityID,
-							Troops: troops,
+			switch attackType {
+			case "city":
+				req := &api.PostActionRequest{
+					Action: &api.Action{
+						Player: playerID,
+						Action: &api.Action_Attack{
+							Attack: &api.Attack{
+								From:   fromCityID,
+								To:     &api.Attack_City{City: toID},
+								Troops: troops,
+							},
 						},
 					},
-				},
-			}
-			err := c.PostAction(req)
-			if err != nil {
-				panic(err)
-			}
-			fmt.Println("Attack action sent.")
-		case "claimMine":
-			if len(parts) < 3 {
-				fmt.Println("Expected input of the form: claimMine <from_city_id> <mine_id>")
-				continue
-			}
-			fromCityID := parts[1]
-			mineID := parts[2]
-			req := &api.PostActionRequest{
-				Action: &api.Action{
-					Player: playerID,
-					Action: &api.Action_ClaimMine{
-						ClaimMine: &api.ClaimMine{
-							From: fromCityID,
-							Mine: mineID,
+				}
+				err := c.PostAction(req)
+				if err != nil {
+					panic(err)
+				}
+				fmt.Println("Attack action sent.")
+			case "mine":
+				req := &api.PostActionRequest{
+					Action: &api.Action{
+						Player: playerID,
+						Action: &api.Action_Attack{
+							Attack: &api.Attack{
+								From:   fromCityID,
+								To:     &api.Attack_Mine{Mine: toID},
+								Troops: troops,
+							},
 						},
 					},
-				},
+				}
+				err := c.PostAction(req)
+				if err != nil {
+					panic(err)
+				}
+				fmt.Println("Mine attack action sent.")
+			default:
+				fmt.Printf("Unknown attack type: %s\n", attackType)
 			}
-			err := c.PostAction(req)
-			if err != nil {
-				panic(err)
-			}
-			fmt.Println("ClaimMine action sent.")
 		case "noop":
 			req := &api.PostActionRequest{
 				Action: &api.Action{

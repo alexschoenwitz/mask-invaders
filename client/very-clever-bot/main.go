@@ -145,7 +145,7 @@ func playGame(client *http.Client, token, playerID string) {
 		// IMPROVED STRATEGY: Concentrate forces on one target
 		// 1. Find the best target to attack
 		bestTarget := findWeakestTarget(myCities, enemyCities, state)
-		
+
 		if bestTarget == "" {
 			// No valid target, build troops everywhere
 			for _, cityName := range myCities {
@@ -163,7 +163,7 @@ func playGame(client *http.Client, token, playerID string) {
 		for _, cityName := range myCities {
 			city := state.Cities[cityName]
 			totalTroops := getTroopStrength(city.Troops)
-			
+
 			// Build troops if weak (less than 8 troops)
 			if totalTroops < 8 {
 				troopType := chooseBestTroopType(enemyCities, state)
@@ -184,7 +184,7 @@ func playGame(client *http.Client, token, playerID string) {
 					}
 					continue
 				}
-				
+
 				// Send 60% of troops, keep 40% for defense
 				attackTroops := make(map[string]int64)
 				for troopType, count := range city.Troops {
@@ -195,7 +195,7 @@ func playGame(client *http.Client, token, playerID string) {
 						}
 					}
 				}
-				
+
 				if len(attackTroops) > 0 {
 					log.Printf("City %s: Attacking %s with %d troops (keeping 40%% defense)", cityName, bestTarget, getTroopStrength(attackTroops))
 					err = attack(client, token, playerID, cityName, bestTarget, attackTroops)
@@ -250,7 +250,7 @@ func findWeakestTarget(myCities, enemyCities []string, state *api.State) string 
 	// Evaluate each enemy city
 	for _, enemyCity := range enemyCities {
 		enemyStrength := getTroopStrength(state.Cities[enemyCity].Troops)
-		
+
 		// Find closest distance from any of our cities
 		minDistance := int64(math.MaxInt64)
 		for _, myCity := range myCities {
@@ -539,7 +539,7 @@ func attack(client *http.Client, token, playerID, from, to string, troops map[st
 			Action: &api.Action_Attack{
 				Attack: &api.Attack{
 					From:   from,
-					To:     to,
+					To:     &api.Attack_City{City: to},
 					Troops: troops,
 				},
 			},
