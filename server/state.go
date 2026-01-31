@@ -231,6 +231,10 @@ func processTurn(currentState *api.State, actions map[string]*api.Action, turnCo
 			fmt.Printf("this should not happen, troops will just disappear")
 			continue
 		}
+
+		// FIXME: either player actions first or do a best effort basis action of movement
+		// after the fight in the movement processing block
+
 		for troopType, amount := range attack.Troops {
 			newAmount := originCity.Troops[troopType] - amount
 			originCity.Troops[troopType] = max(newAmount, 0)
