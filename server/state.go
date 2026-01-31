@@ -114,46 +114,81 @@ func calculateBattle(attackingTroops, defendingTroops map[string]int64) (attacke
 }
 
 func (s *server) run(ctx context.Context) {
-	ticker := time.NewTicker(200 * time.Millisecond)
+	ticker := time.NewTicker(500 * time.Millisecond)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case action := <-s.actionQueue:
-			s.submittedActions[action.GetPlayer()] = action
-			if len(s.submittedActions) != len(s.players) {
-				continue
+			playerID := action.GetPlayer()
+
+			// Get the city this action is for
+			cityID := getCityFromAction(action)
+			if cityID == "" {
+				continue // Invalid action
 			}
+
+			// Initialize map if needed
+			s.actionsLock.Lock()
+			if s.submittedActions[playerID] == nil {
+				s.submittedActions[playerID] = make(map[string]*api.Action)
+			}
+
+			// Store the action (last one wins - allows clients to update their guess)
+			s.submittedActions[playerID][cityID] = action
+			s.actionsLock.Unlock()
+
 		case <-ticker.C:
 			if !s.gameStarted.Load() {
 				continue
 			}
-		}
-		// every player submitted an action, or the timer expired, process the turn!
-		s.actionsLock.Lock()
-		actions := s.submittedActions
-		s.submittedActions = make(map[string]*api.Action)
-		s.actionsLock.Unlock()
+			
+			// Timer expired, process the turn with whatever actions we have!
+			s.actionsLock.Lock()
+			actions := s.submittedActions
+			s.submittedActions = make(map[string]map[string]*api.Action)
+			s.actionsLock.Unlock()
 
-		s.stateLock.Lock()
-		if s.turnCount > 1000 {
+			s.stateLock.Lock()
+			// Skip processing if game hasn't started or state is nil (e.g., after reset)
+			if s.currentState == nil || !s.gameStarted.Load() {
+				s.stateLock.Unlock()
+				continue
+			}
+
+			if s.turnCount > 1000 {
+				s.stateLock.Unlock()
+				return // you really suck at this game if it goes on for more than 1000 turns
+			}
+			s.turnCount++
+			nextState := processTurn(s.currentState, actions, s.turnCount)
+			s.stateHistory = append(s.stateHistory, s.currentState)
+			s.currentState = nextState
+				s.currentState.Turn = s.turnCount
+			victory := s.checkWinCondition()
 			s.stateLock.Unlock()
-			return // you really suck at this game if it goes on for more than 1000 turns
-		}
-		s.turnCount++
-		nextState := processTurn(s.currentState, actions, s.turnCount)
-		s.stateHistory = append(s.stateHistory, s.currentState)
-		s.currentState = nextState
-		s.currentState.Turn = s.turnCount
-		victory := s.checkWinCondition()
-		s.stateLock.Unlock()
 
-		if victory {
-			log.Println("Victory condition met, resetting game in 5 seconds...")
-			time.Sleep(5 * time.Second)
-			s.resetGameState()
-			log.Println("Game state reset. Waiting for players to register again...")
+			if victory {
+				log.Println("Victory condition met, resetting game in 5 seconds...")
+				time.Sleep(5 * time.Second)
+				s.resetGameState()
+				log.Println("Game state reset. Waiting for players to register again...")
+			}
 		}
+	}
+}
+
+// getCityFromAction extracts the city name from an action
+func getCityFromAction(action *api.Action) string {
+	switch a := action.Action.(type) {
+	case *api.Action_Attack:
+		return a.Attack.From
+	case *api.Action_CreateTroop:
+		return a.CreateTroop.In
+	case *api.Action_None:
+		return "" // No specific city
+	default:
+		return ""
 	}
 }
 
@@ -174,7 +209,7 @@ func (s *server) checkWinCondition() bool {
 	return true
 }
 
-func processTurn(currentState *api.State, actions map[string]*api.Action, turnCount int64) *api.State {
+func processTurn(currentState *api.State, actions map[string]map[string]*api.Action, turnCount int64) *api.State {
 	state := proto.CloneOf(currentState)
 
 	// first process movements
@@ -203,44 +238,73 @@ func processTurn(currentState *api.State, actions map[string]*api.Action, turnCo
 	}
 	state.Movements = remainingMovements
 
-	// then process actions
-	for playerID, action := range actions {
-		if action.GetAttack() == nil {
-			continue // we only support attack actions for now (none will skip anyway)
-		}
-		attack := action.GetAttack()
-		// create a new movement
-		distance, ok := state.Distances[attack.To+attack.From]
-		if !ok {
-			distance = state.Distances[attack.From+attack.To]
-		}
-		if distance == nil {
-			fmt.Printf("no distance found between %s and %s, skipping action\n", attack.From, attack.To)
-			continue
-		}
+	// then process player actions: ATTACKS FIRST
+	for playerID, cityActions := range actions {
+		for _, action := range cityActions {
+			if action.GetAttack() == nil {
+				continue
+			}
+			attack := action.GetAttack()
 
-		newMovement := &api.Movement{
-			Player:       playerID,
-			From:         attack.From,
-			To:           attack.To,
-			Troops:       attack.Troops,
-			ArrivingTurn: turnCount + distance.Distance, // TODO: consider speed factors
+			// Re-validate ownership (city might have been captured this turn)
+			originCity := state.Cities[attack.From]
+			if originCity == nil {
+				fmt.Printf("origin city %s does not exist, skipping action\n", attack.From)
+				continue
+			}
+			if originCity.Player != playerID {
+				fmt.Printf("city %s no longer owned by %s, skipping action\n", attack.From, playerID)
+				continue
+			}
+
+			// create a new movement
+			distance, ok := state.Distances[attack.To+attack.From]
+			if !ok {
+				distance = state.Distances[attack.From+attack.To]
+			}
+			if distance == nil {
+				fmt.Printf("no distance found between %s and %s, skipping action\n", attack.From, attack.To)
+				continue
+			}
+
+			newMovement := &api.Movement{
+				Player:       playerID,
+				From:         attack.From,
+				To:           attack.To,
+				Troops:       attack.Troops,
+				ArrivingTurn: turnCount + distance.Distance,
+			}
+			state.Movements = append(state.Movements, newMovement)
+
+			// remove troops from the origin city
+			for troopType, amount := range attack.Troops {
+				newAmount := originCity.Troops[troopType] - amount
+				originCity.Troops[troopType] = max(newAmount, 0)
+			}
 		}
-		state.Movements = append(state.Movements, newMovement)
+	}
 
-		// remove troops from the origin city
-		originCity := state.Cities[attack.From]
-		if originCity == nil {
-			fmt.Printf("this should not happen, troops will just disappear")
-			continue
-		}
+	// finally process CREATE TROOP actions
+	for playerID, cityActions := range actions {
+		for _, action := range cityActions {
+			if action.GetCreateTroop() == nil {
+				continue
+			}
+			createTroop := action.GetCreateTroop()
 
-		// FIXME: either player actions first or do a best effort basis action of movement
-		// after the fight in the movement processing block
+			// Re-validate ownership
+			city := state.Cities[createTroop.In]
+			if city == nil {
+				fmt.Printf("city %s does not exist, skipping action\n", createTroop.In)
+				continue
+			}
+			if city.Player != playerID {
+				fmt.Printf("city %s no longer owned by %s, skipping action\n", createTroop.In, playerID)
+				continue
+			}
 
-		for troopType, amount := range attack.Troops {
-			newAmount := originCity.Troops[troopType] - amount
-			originCity.Troops[troopType] = max(newAmount, 0)
+			// Add the troop
+			city.Troops[createTroop.Type] += 1
 		}
 	}
 
@@ -309,6 +373,7 @@ func (s *server) initializeGameState() {
 }
 
 // resetGameState resets the game state and clears players so they can register again
+// resetGameState resets the game state and clears players so they can register again
 func (s *server) resetGameState() {
 	s.stateLock.Lock()
 	s.gameStarted.Store(false)
@@ -318,14 +383,14 @@ func (s *server) resetGameState() {
 	s.stateLock.Unlock()
 
 	s.actionsLock.Lock()
-	s.submittedActions = make(map[string]*api.Action)
+	s.submittedActions = make(map[string]map[string]*api.Action)
 	s.actionsLock.Unlock()
-	
+
 	// Clear players so they can register again for the new game
 	s.playersLock.Lock()
 	s.players = make(map[string]*player)
 	s.playersLock.Unlock()
-	
+
 	log.Println("All players cleared. Ready for new registrations.")
 }
 
@@ -342,7 +407,7 @@ func (s *server) ResetGame(ctx context.Context, req *api.ResetGameRequest) (*api
 	s.turnCount = 0
 
 	s.actionsLock.Lock()
-	s.submittedActions = make(map[string]*api.Action)
+	s.submittedActions = make(map[string]map[string]*api.Action)
 	s.actionsLock.Unlock()
 
 	s.players = make(map[string]*player)
@@ -415,7 +480,7 @@ func (s *server) PostAction(ctx context.Context, req *api.PostActionRequest) (*a
 		if !ok || c.Player != player.id {
 			return nil, status.Error(codes.PermissionDenied, "city not owned")
 		}
-		c.Troops[createTroopAction.GetType()] += 1
+		// Don't modify state here anymore - will be done in processTurn
 	case *api.Action_None:
 	default:
 		return nil, status.Error(codes.InvalidArgument, "unknown action type")

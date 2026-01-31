@@ -32,7 +32,7 @@ type server struct {
 	stateLock    sync.RWMutex
 	stateHistory []*api.State
 
-	submittedActions map[string]*api.Action
+	submittedActions map[string]map[string]*api.Action // map[playerID][cityName]action (last action wins)
 
 	turnCount   int64
 	gameStarted atomic.Bool // locked once started
@@ -51,7 +51,7 @@ func main() {
 
 	grpcServer := grpc.NewServer(grpc.UnaryInterceptor(serverInterceptor))
 	s := &server{
-		submittedActions: make(map[string]*api.Action),
+		submittedActions: make(map[string]map[string]*api.Action),
 		actionQueue:      make(chan *api.Action, 100),
 		players:          make(map[string]*player),
 		shutdown:         cancel,

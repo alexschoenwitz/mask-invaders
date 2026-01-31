@@ -81,32 +81,42 @@ func playGame(client *client.Client, playerID string) {
 			break
 		}
 
-		// Find the nearest enemy city to attack
-		attackFrom, attackTo := findNearestAttack(myCities, enemyCities, state)
-		if attackFrom == "" || attackTo == "" {
-			log.Println("No valid attack found")
-			continue
-		}
+		// NEW: Take action for each city
+		for _, cityName := range myCities {
+			city := state.Cities[cityName]
+			
+			if !hasTroops(city) {
+				log.Printf("City %s has no troops, skipping", cityName)
+				continue
+			}
+			
+			// Find the nearest enemy city to attack from this city
+			attackTo := findNearestEnemyFrom(cityName, enemyCities, state)
+			if attackTo == "" {
+				log.Printf("City %s: No valid attack target found", cityName)
+				continue
+			}
 
-		// Attack with all troops from the attacking city
-		city := state.Cities[attackFrom]
-		action := &api.PostActionRequest{
-			Action: &api.Action{
-				Player: playerID,
-				Action: &api.Action_Attack{
-					Attack: &api.Attack{
-						From:   attackFrom,
-						To:     attackTo,
-						Troops: city.Troops,
+			// Attack with all troops from this city
+			action := &api.PostActionRequest{
+				Action: &api.Action{
+					Player: playerID,
+					Action: &api.Action_Attack{
+						Attack: &api.Attack{
+							From:   cityName,
+							To:     attackTo,
+							Troops: city.Troops,
+						},
 					},
 				},
-			},
-		}
+			}
 
-		err = client.PostAction(action)
-		if err != nil {
-			log.Printf("Failed to post action: %v", err)
-			continue
+			err = client.PostAction(action)
+			if err != nil {
+				log.Printf("City %s: Failed to attack %s: %v", cityName, attackTo, err)
+			} else {
+				log.Printf("City %s: Attacking %s", cityName, attackTo)
+			}
 		}
 	}
 }
@@ -118,6 +128,21 @@ func hasTroops(c *api.City) bool {
 		}
 	}
 	return false
+}
+
+func findNearestEnemyFrom(myCity string, enemyCities []string, state *api.State) string {
+	minDistance := int64(math.MaxInt64)
+	var attackTo string
+
+	for _, enemyCity := range enemyCities {
+		distance := getDistance(myCity, enemyCity, state.Distances)
+		if distance < minDistance && distance > 0 {
+			minDistance = distance
+			attackTo = enemyCity
+		}
+	}
+
+	return attackTo
 }
 
 func findNearestAttack(myCities, enemyCities []string, state *api.State) (string, string) {

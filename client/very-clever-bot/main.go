@@ -142,27 +142,68 @@ func playGame(client *http.Client, token, playerID string) {
 			break
 		}
 
-		// Strategy: Build troops if we have cities with low troop counts, otherwise attack
-		shouldBuild, buildCity, buildType := shouldBuildTroops(myCities, enemyCities, state)
-		if shouldBuild {
-			err = createTroop(client, token, playerID, buildCity, buildType)
-			if err != nil {
-				log.Printf("Failed to create troop: %v", err)
+		// IMPROVED STRATEGY: Concentrate forces on one target
+		// 1. Find the best target to attack
+		bestTarget := findWeakestTarget(myCities, enemyCities, state)
+		
+		if bestTarget == "" {
+			// No valid target, build troops everywhere
+			for _, cityName := range myCities {
+				troopType := chooseBestTroopType(enemyCities, state)
+				log.Printf("City %s: No target, building troop type %s", cityName, troopType)
+				err = createTroop(client, token, playerID, cityName, troopType)
+				if err != nil {
+					log.Printf("Failed to create troop in %s: %v", cityName, err)
+				}
 			}
 			continue
 		}
 
-		// Clever strategy: target the weakest reachable city with our strongest city
-		attackFrom, attackTo, troops := findOptimalAttack(myCities, enemyCities, state, playerID)
-		if attackFrom == "" || attackTo == "" {
-			log.Println("No valid attack found")
-			continue
-		}
-
-		err = attack(client, token, playerID, attackFrom, attackTo, troops)
-		if err != nil {
-			log.Printf("Failed to attack: %v", err)
-			continue
+		// 2. Coordinate attacks on the best target
+		for _, cityName := range myCities {
+			city := state.Cities[cityName]
+			totalTroops := getTroopStrength(city.Troops)
+			
+			// Build troops if weak (less than 8 troops)
+			if totalTroops < 8 {
+				troopType := chooseBestTroopType(enemyCities, state)
+				log.Printf("City %s: Building troop type %s (current troops: %d)", cityName, troopType, totalTroops)
+				err = createTroop(client, token, playerID, cityName, troopType)
+				if err != nil {
+					log.Printf("Failed to create troop in %s: %v", cityName, err)
+				}
+			} else {
+				// Attack the target, but keep 40% troops for defense
+				distance := getDistance(cityName, bestTarget, state.Distances)
+				if distance == math.MaxInt64 {
+					// Can't reach target, build troops
+					troopType := chooseBestTroopType(enemyCities, state)
+					err = createTroop(client, token, playerID, cityName, troopType)
+					if err != nil {
+						log.Printf("Failed to create troop in %s: %v", cityName, err)
+					}
+					continue
+				}
+				
+				// Send 60% of troops, keep 40% for defense
+				attackTroops := make(map[string]int64)
+				for troopType, count := range city.Troops {
+					if count > 0 {
+						sendCount := (count * 6) / 10
+						if sendCount > 0 {
+							attackTroops[troopType] = sendCount
+						}
+					}
+				}
+				
+				if len(attackTroops) > 0 {
+					log.Printf("City %s: Attacking %s with %d troops (keeping 40%% defense)", cityName, bestTarget, getTroopStrength(attackTroops))
+					err = attack(client, token, playerID, cityName, bestTarget, attackTroops)
+					if err != nil {
+						log.Printf("Failed to attack from %s: %v", cityName, err)
+					}
+				}
+			}
 		}
 	}
 }
@@ -190,6 +231,126 @@ func getGameState(client *http.Client, token string) (*api.State, error) {
 	}
 
 	return stateResp.State, nil
+}
+
+// Find the weakest enemy target that we can all attack
+func findWeakestTarget(myCities, enemyCities []string, state *api.State) string {
+	if len(enemyCities) == 0 {
+		return ""
+	}
+
+	type targetInfo struct {
+		city     string
+		strength int64
+		distance int64
+	}
+
+	var targets []targetInfo
+
+	// Evaluate each enemy city
+	for _, enemyCity := range enemyCities {
+		enemyStrength := getTroopStrength(state.Cities[enemyCity].Troops)
+		
+		// Find closest distance from any of our cities
+		minDistance := int64(math.MaxInt64)
+		for _, myCity := range myCities {
+			dist := getDistance(myCity, enemyCity, state.Distances)
+			if dist < minDistance {
+				minDistance = dist
+			}
+		}
+
+		if minDistance < math.MaxInt64 {
+			targets = append(targets, targetInfo{
+				city:     enemyCity,
+				strength: enemyStrength,
+				distance: minDistance,
+			})
+		}
+	}
+
+	if len(targets) == 0 {
+		return ""
+	}
+
+	// Choose the weakest target that's reasonably close
+	bestScore := float64(-math.MaxInt64)
+	bestTarget := ""
+
+	for _, target := range targets {
+		// Prefer weak targets that are close
+		score := 100.0 / (float64(target.strength+1) * math.Sqrt(float64(target.distance+1)))
+		if score > bestScore {
+			bestScore = score
+			bestTarget = target.city
+		}
+	}
+
+	return bestTarget
+}
+
+// Find the best attack target for a specific city
+func findBestAttackForCity(fromCity string, enemyCities []string, state *api.State, playerID string) (string, map[string]int64) {
+	myCity := state.Cities[fromCity]
+	myStrength := getTroopStrength(myCity.Troops)
+	if myStrength == 0 {
+		return "", nil
+	}
+
+	type attackOption struct {
+		to       string
+		weakness int64
+		distance int64
+	}
+
+	var options []attackOption
+
+	for _, enemyCity := range enemyCities {
+		distance := getDistance(fromCity, enemyCity, state.Distances)
+		if distance == math.MaxInt64 {
+			continue
+		}
+
+		enemyStrength := getTroopStrength(state.Cities[enemyCity].Troops)
+
+		options = append(options, attackOption{
+			to:       enemyCity,
+			weakness: enemyStrength,
+			distance: distance,
+		})
+	}
+
+	if len(options) == 0 {
+		return "", nil
+	}
+
+	// Select the best target: weak enemies that are close
+	bestScore := float64(-math.MaxInt64)
+	var bestTarget string
+
+	for _, opt := range options {
+		// Prefer weak enemies that are close
+		score := float64(myStrength) / (float64(opt.weakness+1) * math.Sqrt(float64(opt.distance+1)))
+
+		if score > bestScore {
+			bestScore = score
+			bestTarget = opt.to
+		}
+	}
+
+	if bestTarget == "" {
+		return "", nil
+	}
+
+	// Return all troops for this attack
+	validTroops := make(map[string]int64)
+	for troopType, count := range myCity.Troops {
+		if count > 0 {
+			validTroops[troopType] = count
+		}
+	}
+
+	return bestTarget, validTroops
 }
 
 // Calculate total troop strength for a city
