@@ -11,7 +11,6 @@ import (
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
-	"github.com/hajimehoshi/ebiten/v2/vector"
 
 	"github.com/alexschoenwitz/mask-invaders/api/server/api"
 )
@@ -23,7 +22,7 @@ const (
 	maxCitySize  = 60
 	minTroopSize = 8
 	maxTroopSize = 10
-	turnDuration = 1000 * time.Millisecond // 1 second per turn
+	turnDuration = 100 * time.Millisecond
 )
 
 // Game state structures - using API protobuf types
@@ -60,6 +59,8 @@ type Game struct {
 	playerColors    map[string]color.RGBA
 	colorPalette    []color.RGBA
 	playerList      []string
+	frameCount      int
+	offscreen       *ebiten.Image
 }
 
 // Player colors palette
@@ -99,6 +100,7 @@ func NewGame(filename string) (*Game, error) {
 		cities:       make(map[string]*CityDisplay),
 		playerColors: make(map[string]color.RGBA),
 		colorPalette: colors,
+		offscreen:    ebiten.NewImage(screenWidth, screenHeight),
 	}
 
 	game.initializeCities()
@@ -189,11 +191,10 @@ func (g *Game) Update() error {
 		g.turnProgress = 0.0
 		g.currentStateIdx++
 		if g.currentStateIdx >= len(g.states) {
-			g.currentStateIdx = len(g.states) // display final state forever
+			g.currentStateIdx = len(g.states)
 		}
 		g.updateDisplayState()
 	} else {
-		// Update movements every frame for smooth animation
 		g.updateMovements()
 	}
 	return nil
@@ -316,7 +317,6 @@ func (g *Game) calculateTroopSize(count int64) float64 {
 }
 
 func (g *Game) Draw(screen *ebiten.Image) {
-	// Clear screen
 	screen.Fill(color.RGBA{20, 20, 30, 255})
 
 	// Draw cities
@@ -338,14 +338,15 @@ func (g *Game) Draw(screen *ebiten.Image) {
 
 func (g *Game) drawCity(screen *ebiten.Image, city *CityDisplay) {
 	playerColor := g.playerColors[city.Player]
-	x, y := float32(city.X), float32(city.Y)
-	size := float32(city.Size)
+	x, y := int(city.X), int(city.Y)
+	size := int(city.Size)
 	halfSize := size / 2
 
-	// Draw city box
-	vector.StrokeRect(screen, x-halfSize, y-halfSize, size, size, 2, playerColor, false)
-	vector.StrokeLine(screen, x-halfSize+5, y-halfSize+5, x+halfSize-5, y+halfSize-5, 2, playerColor, false)
-	vector.StrokeLine(screen, x+halfSize-5, y-halfSize+5, x-halfSize+5, y+halfSize-5, 2, playerColor, false)
+	// Draw simple city box using ebitenutil
+	ebitenutil.DrawRect(screen, float64(x-halfSize), float64(y-halfSize), float64(size), 2, playerColor)
+	ebitenutil.DrawRect(screen, float64(x-halfSize), float64(y+halfSize-2), float64(size), 2, playerColor)
+	ebitenutil.DrawRect(screen, float64(x-halfSize), float64(y-halfSize), 2, float64(size), playerColor)
+	ebitenutil.DrawRect(screen, float64(x+halfSize-2), float64(y-halfSize), 2, float64(size), playerColor)
 
 	// Draw troops around the city
 	g.drawTroopsAtCity(screen, city)
@@ -404,85 +405,9 @@ func (g *Game) drawTroop(screen *ebiten.Image, troopType string, x, y, size floa
 }
 
 func (g *Game) drawOrientedTroop(screen *ebiten.Image, troopType string, x, y, size, angle float32, playerColor color.RGBA) {
-	switch troopType {
-	case "A": // Triangle pointing in direction
-		g.drawOrientedTriangle(screen, x, y, size, angle, playerColor)
-	case "B": // Circle (direction doesn't matter)
-		g.drawCircleOutline(screen, x, y, size, playerColor)
-	case "C": // Square rotated toward direction
-		g.drawOrientedSquare(screen, x, y, size, angle, playerColor)
-	}
-}
-
-func (g *Game) drawOrientedTriangle(screen *ebiten.Image, x, y, size, angle float32, playerColor color.RGBA) {
-	halfSize := size / 2
-
-	// Calculate triangle points pointing in the given direction
-	// Point 1: tip pointing in direction
-	tipX := x + halfSize*float32(math.Cos(float64(angle)))
-	tipY := y + halfSize*float32(math.Sin(float64(angle)))
-
-	// Points 2 & 3: base perpendicular to direction
-	perpAngle1 := angle + math.Pi*2/3
-	perpAngle2 := angle - math.Pi*2/3
-
-	base1X := x + halfSize*0.7*float32(math.Cos(float64(perpAngle1)))
-	base1Y := y + halfSize*0.7*float32(math.Sin(float64(perpAngle1)))
-	base2X := x + halfSize*0.7*float32(math.Cos(float64(perpAngle2)))
-	base2Y := y + halfSize*0.7*float32(math.Sin(float64(perpAngle2)))
-
-	// Draw triangle outline
-	vector.StrokeLine(screen, tipX, tipY, base1X, base1Y, 2, playerColor, false)
-	vector.StrokeLine(screen, base1X, base1Y, base2X, base2Y, 2, playerColor, false)
-	vector.StrokeLine(screen, base2X, base2Y, tipX, tipY, 2, playerColor, false)
-}
-
-func (g *Game) drawCircleOutline(screen *ebiten.Image, x, y, size float32, playerColor color.RGBA) {
-	// Draw circle outline using multiple line segments
-	radius := size / 2
-	numSegments := 20
-	for i := 0; i < numSegments; i++ {
-		angle1 := 2 * math.Pi * float64(i) / float64(numSegments)
-		angle2 := 2 * math.Pi * float64(i+1) / float64(numSegments)
-
-		x1 := x + radius*float32(math.Cos(angle1))
-		y1 := y + radius*float32(math.Sin(angle1))
-		x2 := x + radius*float32(math.Cos(angle2))
-		y2 := y + radius*float32(math.Sin(angle2))
-
-		vector.StrokeLine(screen, x1, y1, x2, y2, 2, playerColor, false)
-	}
-}
-
-func (g *Game) drawOrientedSquare(screen *ebiten.Image, x, y, size, angle float32, playerColor color.RGBA) {
-	halfSize := size / 2
-
-	// Calculate rotated square corners
-	cosA, sinA := float32(math.Cos(float64(angle))), float32(math.Sin(float64(angle)))
-
-	// Corner offsets from center
-	offsets := [][2]float32{
-		{-halfSize, -halfSize}, {halfSize, -halfSize},
-		{halfSize, halfSize}, {-halfSize, halfSize},
-	}
-
-	// Rotate and translate corners
-	var corners [4][2]float32
-	for i, offset := range offsets {
-		// Rotate offset
-		rotX := offset[0]*cosA - offset[1]*sinA
-		rotY := offset[0]*sinA + offset[1]*cosA
-
-		// Translate to position
-		corners[i][0] = x + rotX
-		corners[i][1] = y + rotY
-	}
-
-	// Draw square outline
-	for i := 0; i < 4; i++ {
-		next := (i + 1) % 4
-		vector.StrokeLine(screen, corners[i][0], corners[i][1], corners[next][0], corners[next][1], 2, playerColor, false)
-	}
+	// Draw simple filled rectangles for all troop types
+	halfSize := float64(size / 2)
+	ebitenutil.DrawRect(screen, float64(x)-halfSize, float64(y)-halfSize, float64(size), float64(size), playerColor)
 }
 
 func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
@@ -508,6 +433,8 @@ func main() {
 
 	ebiten.SetWindowSize(screenWidth, screenHeight)
 	ebiten.SetWindowTitle("Mask Invaders Replay")
+	ebiten.SetTPS(60)
+	ebiten.SetFPSMode(ebiten.FPSModeVsyncOn)
 
 	if err := ebiten.RunGame(game); err != nil {
 		log.Fatal(err)

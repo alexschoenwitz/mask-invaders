@@ -17,7 +17,7 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260128011058-8636f8732409 // indirect
 )
 
-require github.com/hajimehoshi/ebiten/v2 v2.9.8
+require github.com/hajimehoshi/ebiten/v2 v2.8.9
 
 require (
 	github.com/ebitengine/gomobile v0.0.0-20250923094054-ea854a63cce1 // indirect
