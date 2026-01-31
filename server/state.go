@@ -370,6 +370,16 @@ func (s *server) PostAction(ctx context.Context, req *api.PostActionRequest) (*a
 				return nil, status.Errorf(codes.InvalidArgument, "invalid troop amount for type %s: %d", troopType, troopAmount)
 			}
 		}
+	case *api.Action_CreateTroop:
+		createTroopAction := req.GetAction().GetCreateTroop()
+		if _, ok := validTroops[createTroopAction.GetType()]; !ok {
+			return nil, status.Error(codes.InvalidArgument, "invalid troop type")
+		}
+		c, ok := currentState.Cities[createTroopAction.GetIn()]
+		if !ok || c.Player != player.id {
+			return nil, status.Error(codes.PermissionDenied, "city not owned")
+		}
+		c.Troops[createTroopAction.GetType()] += 1
 	case *api.Action_None:
 	default:
 		return nil, status.Error(codes.InvalidArgument, "unknown action type")

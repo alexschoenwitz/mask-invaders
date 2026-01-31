@@ -1,28 +1,34 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"image/color"
+	"io"
 	"log"
 	"math"
+	"net/http"
 	"os"
 	"time"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
+	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/alexschoenwitz/mask-invaders/api/server/api"
 )
 
 const (
-	screenWidth  = 1200
-	screenHeight = 800
-	minCitySize  = 50
-	maxCitySize  = 60
-	minTroopSize = 8
-	maxTroopSize = 10
-	turnDuration = 100 * time.Millisecond
+	screenWidth   = 1200
+	screenHeight  = 800
+	minCitySize   = 50
+	maxCitySize   = 60
+	minTroopSize  = 8
+	maxTroopSize  = 10
+	turnDuration  = 100 * time.Millisecond
+	pollInterval  = 200 * time.Millisecond // How often to poll the server
+	defaultAPIURL = "http://localhost:8080"
 )
 
 // Game state structures - using API protobuf types
@@ -49,9 +55,12 @@ type MovementDisplay struct {
 
 // Game represents the main game state
 type Game struct {
+	apiURL          string
+	httpClient      *http.Client
 	states          []*api.State
 	currentStateIdx int
 	lastUpdate      time.Time
+	lastPoll        time.Time
 	turnProgress    float64 // 0.0 to 1.0 progress within current turn
 	currentTurn     float64 // Continuous current turn with sub-turn precision
 	cities          map[string]*CityDisplay
@@ -61,6 +70,9 @@ type Game struct {
 	playerList      []string
 	frameCount      int
 	offscreen       *ebiten.Image
+	isLiveMode      bool      // true if using live API, false if replay mode
+	lastStateTime   time.Time // When we received the last state update
+	lastStateTurn   int64     // Last turn number we received from server
 }
 
 // Player colors palette
@@ -101,6 +113,7 @@ func NewGame(filename string) (*Game, error) {
 		playerColors: make(map[string]color.RGBA),
 		colorPalette: colors,
 		offscreen:    ebiten.NewImage(screenWidth, screenHeight),
+		isLiveMode:   false,
 	}
 
 	game.initializeCities()
@@ -108,6 +121,104 @@ func NewGame(filename string) (*Game, error) {
 	game.updateDisplayState() // Initialize the display state
 
 	return game, nil
+}
+
+func NewGameLive(apiURL string) (*Game, error) {
+	if apiURL == "" {
+		apiURL = defaultAPIURL
+	}
+
+	game := &Game{
+		apiURL:       apiURL,
+		httpClient:   &http.Client{Timeout: 5 * time.Second},
+		states:       []*api.State{},
+		lastUpdate:   time.Now(),
+		lastPoll:     time.Now(),
+		cities:       make(map[string]*CityDisplay),
+		playerColors: make(map[string]color.RGBA),
+		colorPalette: colors,
+		offscreen:    ebiten.NewImage(screenWidth, screenHeight),
+		isLiveMode:   true,
+	}
+
+	// Try to fetch initial state
+	if err := game.pollServerState(); err != nil {
+		log.Printf("Warning: Failed to fetch initial state: %v", err)
+	}
+
+	return game, nil
+}
+
+func (g *Game) pollServerState() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, "GET", g.apiURL+"/v1/state", nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %v", err)
+	}
+
+	resp, err := g.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to fetch state: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response: %v", err)
+	}
+
+	stateResponse := api.GetStateResponse{}
+	if err := protojson.Unmarshal(body, &stateResponse); err != nil {
+		return fmt.Errorf("failed to parse JSON: %v", err)
+	}
+
+	if stateResponse.State == nil {
+		// Game hasn't started yet
+		return nil
+	}
+
+	// Detect if a new game has started (turn number went backwards or reset)
+	if len(g.states) > 0 && stateResponse.State.Turn < g.states[len(g.states)-1].Turn {
+		log.Printf("New game detected (turn %d < previous %d), resetting state", stateResponse.State.Turn, g.states[len(g.states)-1].Turn)
+		// Reset everything for the new game
+		g.states = []*api.State{}
+		g.cities = make(map[string]*CityDisplay)
+		g.playerColors = make(map[string]color.RGBA)
+		g.playerList = nil
+		g.movements = nil
+		g.currentStateIdx = 0
+		g.lastStateTime = time.Time{}
+		g.lastStateTurn = 0
+		g.currentTurn = 0
+	}
+
+	// Check if this is a new state
+	if len(g.states) == 0 || g.states[len(g.states)-1].Turn != stateResponse.State.Turn {
+		g.states = append(g.states, stateResponse.State)
+
+		// Initialize cities on first state
+		if len(g.cities) == 0 {
+			g.initializeCities()
+			g.assignPlayerColors()
+		}
+
+		// Update timing info - this is our sync point
+		g.currentStateIdx = len(g.states) - 1
+		g.lastStateTurn = stateResponse.State.Turn
+		g.lastStateTime = time.Now()
+		g.currentTurn = float64(stateResponse.State.Turn)
+		
+		g.updateDisplayState()
+	}
+
+	return nil
 }
 
 func (g *Game) initializeCities() {
@@ -175,28 +286,56 @@ func (g *Game) assignPlayerColors() {
 
 func (g *Game) Update() error {
 	now := time.Now()
-	elapsed := now.Sub(g.lastUpdate)
 
-	// Update turn progress for smooth transitions
-	g.turnProgress = float64(elapsed) / float64(turnDuration)
-
-	// Update continuous current turn for smooth movement
-	if len(g.states) > 0 && g.currentStateIdx < len(g.states) {
-		baseTurn := float64(g.states[g.currentStateIdx].Turn)
-		g.currentTurn = baseTurn + g.turnProgress
-	}
-
-	if elapsed >= turnDuration {
-		g.lastUpdate = now
-		g.turnProgress = 0.0
-		g.currentStateIdx++
-		if g.currentStateIdx >= len(g.states) {
-			g.currentStateIdx = len(g.states)
+	// Poll server in live mode
+	if g.isLiveMode && now.Sub(g.lastPoll) >= pollInterval {
+		g.lastPoll = now
+		if err := g.pollServerState(); err != nil {
+			log.Printf("Failed to poll server: %v", err)
 		}
-		g.updateDisplayState()
-	} else {
-		g.updateMovements()
 	}
+
+	if !g.isLiveMode {
+		// Replay mode: advance through states automatically
+		elapsed := now.Sub(g.lastUpdate)
+		g.turnProgress = float64(elapsed) / float64(turnDuration)
+		
+		// Update continuous current turn for smooth movement
+		if len(g.states) > 0 && g.currentStateIdx < len(g.states) {
+			baseTurn := float64(g.states[g.currentStateIdx].Turn)
+			g.currentTurn = baseTurn + g.turnProgress
+		}
+
+		if elapsed >= turnDuration {
+			g.lastUpdate = now
+			g.turnProgress = 0.0
+			g.currentStateIdx++
+			if g.currentStateIdx >= len(g.states) {
+				g.currentStateIdx = len(g.states) - 1
+			}
+			g.updateDisplayState()
+		}
+	} else if g.lastStateTurn > 0 {
+		// Live mode: smoothly interpolate from last known server turn
+		// Calculate how much time has passed since the last state update
+		elapsed := now.Sub(g.lastStateTime).Seconds()
+		
+		// Estimate turn progress (assuming 1 turn = pollInterval * 2)
+		// This is a rough estimate - movements will sync when new states arrive
+		estimatedTurnProgress := elapsed / (pollInterval.Seconds() * 2)
+		
+		// Current turn is the last known turn plus smooth interpolation
+		// Cap the interpolation at 0.5 turns ahead to avoid running too far ahead
+		if estimatedTurnProgress > 0.5 {
+			estimatedTurnProgress = 0.5
+		}
+		
+		g.currentTurn = float64(g.lastStateTurn) + estimatedTurnProgress
+	}
+	
+	// Always update movements every frame for smooth animation
+	g.updateMovements()
+	
 	return nil
 }
 
@@ -229,27 +368,37 @@ func (g *Game) updateMovements() {
 	// Update movements
 	g.movements = nil
 
+	// Use currentTurn for time calculation
+	currentTime := g.currentTurn
+
 	for _, movement := range currentState.Movements {
-		if movement.ArrivingTurn > int64(g.currentTurn) {
-			fromCity, fromExists := g.cities[movement.From]
-			toCity, toExists := g.cities[movement.To]
+		fromCity, fromExists := g.cities[movement.From]
+		toCity, toExists := g.cities[movement.To]
 
-			if fromExists && toExists {
-				// Calculate movement start time (when it was created)
-				startTurn := g.findMovementStartTurn(movement)
+		if fromExists && toExists {
+			// Calculate movement start time (when it was created)
+			startTurn := g.findMovementStartTurn(movement)
 
-				// Calculate smooth progress based on continuous time
-				totalDuration := float64(movement.ArrivingTurn - startTurn)
-				elapsed := g.currentTurn - float64(startTurn)
-				progress := elapsed / totalDuration
+			// Calculate smooth progress based on continuous time
+			totalDuration := float64(movement.ArrivingTurn - startTurn)
+			var progress float64
+			if totalDuration > 0 {
+				elapsed := currentTime - float64(startTurn)
+				progress = elapsed / totalDuration
+			} else {
+				progress = 0.0
+			}
 
-				if progress > 1.0 {
-					progress = 1.0
-				}
-				if progress < 0.0 {
-					progress = 0.0
-				}
+			// Clamp progress
+			if progress > 1.0 {
+				progress = 1.0
+			}
+			if progress < 0.0 {
+				progress = 0.0
+			}
 
+			// Only show movements that are in progress
+			if progress >= 0.0 && progress <= 1.0 {
 				g.movements = append(g.movements, &MovementDisplay{
 					From:         fromCity,
 					To:           toCity,
@@ -329,10 +478,16 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		g.drawMovement(screen, movement)
 	}
 
-	// Draw turn counter
+	// Draw turn counter and mode
+	mode := "Replay"
+	if g.isLiveMode {
+		mode = "Live"
+	}
 	if g.currentStateIdx < len(g.states) {
 		turn := g.states[g.currentStateIdx].Turn
-		ebitenutil.DebugPrint(screen, fmt.Sprintf("Turn: %d", turn))
+		ebitenutil.DebugPrint(screen, fmt.Sprintf("Turn: %d [%s]", turn, mode))
+	} else {
+		ebitenutil.DebugPrint(screen, fmt.Sprintf("Waiting for game... [%s]", mode))
 	}
 }
 
@@ -422,17 +577,31 @@ func min(a, b int) int {
 }
 
 func main() {
-	if len(os.Args) < 2 {
-		log.Fatal("Usage: go run . <gamehistory.json>")
-	}
+	var game *Game
+	var err error
 
-	game, err := NewGame(os.Args[1])
-	if err != nil {
-		log.Fatalf("Failed to create game: %v", err)
+	// Check if running in live mode or replay mode
+	if len(os.Args) < 2 {
+		log.Println("No file specified, connecting to live server...")
+		apiURL := defaultAPIURL
+		if len(os.Args) == 2 {
+			apiURL = os.Args[1]
+		}
+		game, err = NewGameLive(apiURL)
+		if err != nil {
+			log.Fatalf("Failed to connect to server: %v", err)
+		}
+		log.Printf("Connected to server at %s", apiURL)
+	} else {
+		log.Printf("Loading replay from %s", os.Args[1])
+		game, err = NewGame(os.Args[1])
+		if err != nil {
+			log.Fatalf("Failed to load replay: %v", err)
+		}
 	}
 
 	ebiten.SetWindowSize(screenWidth, screenHeight)
-	ebiten.SetWindowTitle("Mask Invaders Replay")
+	ebiten.SetWindowTitle("Mask Invaders Visualization")
 	ebiten.SetTPS(60)
 	ebiten.SetFPSMode(ebiten.FPSModeVsyncOn)
 

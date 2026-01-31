@@ -17,6 +17,10 @@ import (
 const (
 	serverURL = "http://localhost:8080"
 	botName   = "VeryCleverBot"
+
+	troopA = "A"
+	troopB = "B"
+	troopC = "C"
 )
 
 func main() {
@@ -138,6 +142,16 @@ func playGame(client *http.Client, token, playerID string) {
 			break
 		}
 
+		// Strategy: Build troops if we have cities with low troop counts, otherwise attack
+		shouldBuild, buildCity, buildType := shouldBuildTroops(myCities, enemyCities, state)
+		if shouldBuild {
+			err = createTroop(client, token, playerID, buildCity, buildType)
+			if err != nil {
+				log.Printf("Failed to create troop: %v", err)
+			}
+			continue
+		}
+
 		// Clever strategy: target the weakest reachable city with our strongest city
 		attackFrom, attackTo, troops := findOptimalAttack(myCities, enemyCities, state, playerID)
 		if attackFrom == "" || attackTo == "" {
@@ -214,6 +228,14 @@ func findOptimalAttack(myCities, enemyCities []string, state *api.State, playerI
 
 			enemyStrength := getTroopStrength(state.Cities[enemyCity].Troops)
 
+			// Filter out troops with 0 count
+			validTroops := make(map[string]int64)
+			for troopType, count := range state.Cities[myCity].Troops {
+				if count > 0 {
+					validTroops[troopType] = count
+				}
+			}
+
 			// Score: prioritize weak enemies, close distance, and our strong cities
 			options = append(options, attackOption{
 				from:     myCity,
@@ -221,7 +243,7 @@ func findOptimalAttack(myCities, enemyCities []string, state *api.State, playerI
 				strength: myStrength,
 				weakness: enemyStrength,
 				distance: distance,
-				troops:   state.Cities[myCity].Troops,
+				troops:   validTroops,
 			})
 		}
 	}
@@ -261,6 +283,92 @@ func getDistance(city1, city2 string, distances map[string]*api.Distance) int64 
 		return dist.Distance
 	}
 	return math.MaxInt64 // No connection found
+}
+
+// Determine if we should build troops and where/what
+func shouldBuildTroops(myCities, enemyCities []string, state *api.State) (bool, string, string) {
+	// Build troops in cities that have low troop counts
+	const minTroopsPerCity = 5
+
+	for _, cityName := range myCities {
+		city := state.Cities[cityName]
+		totalTroops := getTroopStrength(city.Troops)
+
+		if totalTroops < minTroopsPerCity {
+			// Analyze enemy composition to choose best counter troop
+			troopType := chooseBestTroopType(enemyCities, state)
+			log.Printf("Building troop type %s in city %s (current troops: %d)", troopType, cityName, totalTroops)
+			return true, cityName, troopType
+		}
+	}
+
+	return false, "", ""
+}
+
+// Choose the best troop type based on enemy composition
+func chooseBestTroopType(enemyCities []string, state *api.State) string {
+	enemyTroopCounts := map[string]int64{
+		troopA: 0,
+		troopB: 0,
+		troopC: 0,
+	}
+
+	// Count enemy troop types
+	for _, cityName := range enemyCities {
+		city := state.Cities[cityName]
+		for troopType, count := range city.Troops {
+			enemyTroopCounts[troopType] += count
+		}
+	}
+
+	// Choose counter based on rock-paper-scissors logic
+	// A is strong vs C (2.1), B is strong vs A (1.3), C is strong vs B (1.1)
+	if enemyTroopCounts[troopC] > enemyTroopCounts[troopA] && enemyTroopCounts[troopC] > enemyTroopCounts[troopB] {
+		return troopA // Counter C with A
+	} else if enemyTroopCounts[troopA] > enemyTroopCounts[troopB] {
+		return troopB // Counter A with B
+	} else {
+		return troopC // Counter B with C
+	}
+}
+
+func createTroop(client *http.Client, token, playerID, city, troopType string) error {
+	action := &api.PostActionRequest{
+		Action: &api.Action{
+			Player: playerID,
+			Action: &api.Action_CreateTroop{
+				CreateTroop: &api.CreateTroop{
+					In:   city,
+					Type: troopType,
+				},
+			},
+		},
+	}
+
+	jsonData, err := protojson.Marshal(action)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequest("POST", serverURL+"/v1/action", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("authorization", token)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("create troop failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
 }
 
 func attack(client *http.Client, token, playerID, from, to string, troops map[string]int64) error {
