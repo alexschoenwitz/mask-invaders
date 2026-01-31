@@ -30,10 +30,10 @@ const (
 	maxCitySize      = 60
 	minTroopSize     = 8
 	maxTroopSize     = 10
-	pollInterval     = 2000 * time.Millisecond // How often to poll the server
-	turnPlaybackRate = 5000 * time.Millisecond // Fixed rate to consume states from buffer
-	minBufferStates  = 3                       // Minimum states to buffer before starting playback
-	stateBufferSize  = 20                      // Number of states to keep in buffer
+	pollInterval     = 200 * time.Millisecond // How often to poll the server
+	turnPlaybackRate = 500 * time.Millisecond // Fixed rate to consume states from buffer
+	minBufferStates  = 3                      // Minimum states to buffer before starting playback
+	stateBufferSize  = 20                     // Number of states to keep in buffer
 	defaultAPIURL    = "http://localhost:8080"
 )
 

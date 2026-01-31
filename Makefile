@@ -22,4 +22,6 @@ run-game: generate
 	@go run ./client/very-clever-bot/main.go &
 	@go run ./client/very-clever-bot/main.go &
 	@go run ./client/very-clever-bot/main.go &
+	@go run ./client/very-clever-bot/main.go &
+	@go run ./client/very-clever-bot/main.go &
 	@go run ./client/very-clever-bot/main.go -s &

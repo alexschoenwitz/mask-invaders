@@ -31,11 +31,47 @@ class Game {
         
         this.currentTurn = 0;
         this.gameStarted = false;
+        this.tick = 0; // Frame counter for animations
+        
+        // Sprites
+        this.sprites = {
+            background: null,
+            castle: null,
+            archer: null,
+            knight: null,
+            infantry: null
+        };
+        this.spritesLoaded = false;
         
         // Initialize
+        this.loadSprites();
         this.setupEventListeners();
         this.startPolling();
         this.render();
+    }
+    
+    async loadSprites() {
+        const loadImage = (src) => {
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                img.onload = () => resolve(img);
+                img.onerror = reject;
+                img.src = src;
+            });
+        };
+        
+        try {
+            this.sprites.background = await loadImage('background.png');
+            this.sprites.castle = await loadImage('castle.png');
+            this.sprites.archer = await loadImage('archer.png');
+            this.sprites.knight = await loadImage('knight.png');
+            this.sprites.infantry = await loadImage('infantry.png');
+            this.spritesLoaded = true;
+            console.log('Sprites loaded successfully');
+        } catch (error) {
+            console.error('Failed to load sprites:', error);
+            console.log('Falling back to simple graphics');
+        }
     }
     
     setupEventListeners() {
@@ -349,9 +385,16 @@ class Game {
     }
     
     render() {
-        // Clear canvas
-        this.ctx.fillStyle = '#0f3460';
-        this.ctx.fillRect(0, 0, this.width, this.height);
+        this.tick++;
+        
+        // Draw background
+        if (this.spritesLoaded && this.sprites.background) {
+            this.drawBackground();
+        } else {
+            // Fallback background
+            this.ctx.fillStyle = '#0f3460';
+            this.ctx.fillRect(0, 0, this.width, this.height);
+        }
         
         // Draw cities
         for (const city of this.cities.values()) {
@@ -368,6 +411,29 @@ class Game {
         
         // Continue rendering
         requestAnimationFrame(() => this.render());
+    }
+    
+    drawBackground() {
+        const img = this.sprites.background;
+        const frameWidth = img.width / 4; // 4 columns
+        const frameHeight = img.height; // 1 row
+        
+        // Animate background every 5 turns
+        const frameIndex = Math.floor(this.currentTurn / 5) % 4;
+        
+        // Apply 10% crop on each side
+        const cropPercent = 0.1;
+        const cropX = frameWidth * cropPercent;
+        const cropY = frameHeight * cropPercent;
+        const croppedWidth = frameWidth * (1 - 2 * cropPercent);
+        const croppedHeight = frameHeight * (1 - 2 * cropPercent);
+        
+        // Draw the cropped frame scaled to fill canvas
+        this.ctx.drawImage(
+            img,
+            frameIndex * frameWidth + cropX, cropY, croppedWidth, croppedHeight,
+            0, 0, this.width, this.height
+        );
     }
     
     drawCity(city) {
@@ -392,20 +458,24 @@ class Game {
             ctx.stroke();
         }
         
-        // Draw castle circle
-        ctx.fillStyle = color;
-        ctx.globalAlpha = 0.3;
-        ctx.beginPath();
-        ctx.arc(city.x, city.y, 35, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.globalAlpha = 1.0;
-        
-        // Draw castle border
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.arc(city.x, city.y, 35, 0, Math.PI * 2);
-        ctx.stroke();
+        // Draw castle sprite or fallback
+        if (this.spritesLoaded && this.sprites.castle) {
+            this.drawCastleSprite(city, color);
+        } else {
+            // Fallback: draw circle
+            ctx.fillStyle = color;
+            ctx.globalAlpha = 0.3;
+            ctx.beginPath();
+            ctx.arc(city.x, city.y, 35, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.globalAlpha = 1.0;
+            
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.arc(city.x, city.y, 35, 0, Math.PI * 2);
+            ctx.stroke();
+        }
         
         // Draw castle name
         ctx.fillStyle = '#fff';
@@ -417,13 +487,114 @@ class Game {
         // Draw troop counts
         const troops = city.troops || {};
         ctx.font = '11px Arial';
-        ctx.textAlign = 'left';
+        ctx.textAlign = 'right';
         let yOffset = -20;
         for (const type of ['A', 'B', 'C']) {
             const count = troops[type] || 0;
-            ctx.fillText(`${type}:${count}`, city.x + 30, city.y + yOffset);
+            ctx.fillText(`${type}:${count}`, city.x + 35, city.y + yOffset);
             yOffset += 14;
         }
+        
+        // Draw troop sprites around city
+        this.drawTroopsAtCity(city, color);
+    }
+    
+    drawCastleSprite(city, color) {
+        const img = this.sprites.castle;
+        const frameWidth = img.width / 4; // 4 columns
+        const frameHeight = img.height; // 1 row
+        
+        // Animate castle every 5 turns
+        const frameIndex = Math.floor(this.currentTurn / 5) % 4;
+        
+        const scale = 0.5;
+        const drawWidth = frameWidth * scale;
+        const drawHeight = frameHeight * scale;
+        const x = city.x - drawWidth / 2;
+        const y = city.y - drawHeight / 2;
+        
+        // Draw castle sprite
+        this.ctx.drawImage(
+            img,
+            frameIndex * frameWidth, 0, frameWidth, frameHeight,
+            x, y, drawWidth, drawHeight
+        );
+        
+        // Draw shadow oval below castle
+        const shadowColor = this.hexToRGBA(color, 0.3);
+        this.drawOval(city.x, city.y + drawHeight * 0.3, drawWidth * 0.6, drawHeight * 0.2, shadowColor);
+    }
+    
+    drawTroopsAtCity(city, playerColor) {
+        const troops = city.troops || {};
+        const troopTypes = ['A', 'B', 'C'];
+        
+        troopTypes.forEach((type, i) => {
+            const count = troops[type] || 0;
+            if (count > 0) {
+                const angle = (2 * Math.PI * i) / 3;
+                const offset = 65;
+                const troopX = city.x + offset * Math.cos(angle);
+                const troopY = city.y + offset * Math.sin(angle);
+                
+                this.drawTroopSprite(type, troopX, troopY, playerColor);
+            }
+        });
+    }
+    
+    drawTroopSprite(troopType, x, y, playerColor) {
+        let img;
+        switch (troopType) {
+            case 'A': img = this.sprites.archer; break;
+            case 'B': img = this.sprites.knight; break;
+            case 'C': img = this.sprites.infantry; break;
+            default: img = this.sprites.infantry;
+        }
+        
+        if (!img) return;
+        
+        const frameWidth = img.width / 4; // 4 columns
+        const frameHeight = img.height / 2; // 2 rows
+        
+        // Animate troops
+        const animSpeed = 10;
+        const totalFrames = 8;
+        const frameIndex = Math.floor(this.tick / animSpeed) % totalFrames;
+        const row = Math.floor(frameIndex / 4);
+        const col = frameIndex % 4;
+        
+        const scale = 0.1;
+        const drawWidth = frameWidth * scale;
+        const drawHeight = frameHeight * scale;
+        
+        // Draw shadow oval
+        const shadowColor = this.hexToRGBA(playerColor, 0.3);
+        this.drawOval(x + drawWidth / 2, y + drawHeight + 5, 12, 5, shadowColor);
+        
+        // Draw troop sprite
+        this.ctx.drawImage(
+            img,
+            col * frameWidth, row * frameHeight, frameWidth, frameHeight,
+            x, y, drawWidth, drawHeight
+        );
+    }
+    
+    drawOval(centerX, centerY, radiusX, radiusY, color) {
+        this.ctx.save();
+        this.ctx.fillStyle = color;
+        this.ctx.beginPath();
+        this.ctx.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, Math.PI * 2);
+        this.ctx.fill();
+        this.ctx.restore();
+    }
+    
+    hexToRGBA(hex, alpha) {
+        // Remove # if present
+        hex = hex.replace('#', '');
+        const r = parseInt(hex.substr(0, 2), 16);
+        const g = parseInt(hex.substr(2, 2), 16);
+        const b = parseInt(hex.substr(4, 2), 16);
+        return `rgba(${r}, ${g}, ${b}, ${alpha})`;
     }
     
     drawMovement(movement) {
@@ -456,19 +627,17 @@ class Game {
         this.ctx.stroke();
         this.ctx.setLineDash([]);
         
-        // Draw troop indicator
-        this.ctx.fillStyle = color;
-        this.ctx.beginPath();
-        this.ctx.arc(x, y, 8, 0, Math.PI * 2);
-        this.ctx.fill();
-        
-        // Draw troop count
+        // Draw moving troops
         const troops = movement.troops || {};
-        const total = (troops.A || 0) + (troops.B || 0) + (troops.C || 0);
-        this.ctx.fillStyle = '#fff';
-        this.ctx.font = '10px Arial';
-        this.ctx.textAlign = 'center';
-        this.ctx.fillText(total.toString(), x, y + 20);
+        const troopTypes = ['A', 'B', 'C'];
+        troopTypes.forEach((type, i) => {
+            const count = troops[type] || 0;
+            if (count > 0) {
+                const offsetX = (i - 1) * 8;
+                const offsetY = (i - 1) * 8;
+                this.drawTroopSprite(type, x + offsetX, y + offsetY, color);
+            }
+        });
     }
     
     drawUI() {
