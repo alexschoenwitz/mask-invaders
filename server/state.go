@@ -144,10 +144,8 @@ func (s *server) run(ctx context.Context) {
 			}
 
 			// Timer expired, process the turn with whatever actions we have!
-			s.actionsLock.Lock()
 			actions := s.submittedActions
 			s.submittedActions = make(map[string]map[string]*api.Action)
-			s.actionsLock.Unlock()
 
 			s.stateLock.Lock()
 			// Skip processing if game hasn't started or state is nil (e.g., after reset)
@@ -156,15 +154,15 @@ func (s *server) run(ctx context.Context) {
 				continue
 			}
 
-			if s.turnCount > 1000 {
+			if s.turnCount > 1_000_000 {
 				s.stateLock.Unlock()
 				return // you really suck at this game if it goes on for more than 1000 turns
 			}
 			s.turnCount++
 			nextState := processTurn(s.currentState, actions, s.turnCount)
+			nextState.Turn = s.turnCount // Set turn on the new state before making it current
 			s.stateHistory = append(s.stateHistory, s.currentState)
 			s.currentState = nextState
-			s.currentState.Turn = s.turnCount
 			victory := s.checkWinCondition()
 			s.stateLock.Unlock()
 
@@ -268,7 +266,7 @@ func processTurn(currentState *api.State, actions map[string]map[string]*api.Act
 				continue
 			}
 			if originCity.Player != playerID {
-				fmt.Printf("city %s no longer owned by %s, skipping action\n", attack.From, playerID)
+				// fmt.Printf("city %s no longer owned by %s, skipping action\n", attack.From, playerID)
 				continue
 			}
 
@@ -332,7 +330,7 @@ func processTurn(currentState *api.State, actions map[string]map[string]*api.Act
 				continue
 			}
 			if city.Player != playerID {
-				fmt.Printf("city %s no longer owned by %s, skipping action\n", createTroop.In, playerID)
+				// fmt.Printf("city %s no longer owned by %s, skipping action\n", createTroop.In, playerID)
 				continue
 			}
 
@@ -452,14 +450,25 @@ func (s *server) GetState(ctx context.Context, req *api.GetStateRequest) (*api.G
 	s.stateLock.RLock()
 	defer s.stateLock.RUnlock()
 
-	return &api.GetStateResponse{State: s.currentState}, nil
+	if s.currentState == nil {
+		return &api.GetStateResponse{State: nil}, nil
+	}
+
+	// Must clone while holding the lock to prevent concurrent modification
+	ret := proto.CloneOf(s.currentState)
+	return &api.GetStateResponse{State: ret}, nil
 }
 
 func (s *server) GetStateHistory(ctx context.Context, req *api.GetStateHistoryRequest) (*api.GetStateHistoryResponse, error) {
 	s.stateLock.RLock()
 	defer s.stateLock.RUnlock()
 
-	return &api.GetStateHistoryResponse{States: s.stateHistory}, nil
+	ret := []*api.State{}
+	for _, sh := range s.stateHistory {
+		ret = append(ret, proto.CloneOf(sh))
+	}
+
+	return &api.GetStateHistoryResponse{States: ret}, nil
 }
 
 func (s *server) PostAction(ctx context.Context, req *api.PostActionRequest) (*api.PostActionResponse, error) {
@@ -542,8 +551,7 @@ func (s *server) PostAction(ctx context.Context, req *api.PostActionRequest) (*a
 		if !ok || c.Player != player.id {
 			return nil, status.Error(codes.PermissionDenied, "city not owned")
 		}
-		// Don't modify state here anymore - will be done in processTurn
-		c.Troops[createTroopAction.GetType()] += 1
+		// State will be modified in processTurn, just validate here
 	case *api.Action_None:
 	default:
 		return nil, status.Error(codes.InvalidArgument, "unknown action type")

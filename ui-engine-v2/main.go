@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -16,13 +17,14 @@ import (
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
+	"github.com/hajimehoshi/ebiten/v2/vector"
 	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/alexschoenwitz/mask-invaders/api/server/api"
 )
 
 const (
-	screenWidth      = 1200
+	screenWidth      = 800
 	screenHeight     = 800
 	minCitySize      = 50
 	maxCitySize      = 60
@@ -65,25 +67,30 @@ type StateBuffer struct {
 
 // Game represents the main game state
 type Game struct {
-	apiURL          string
-	httpClient      *http.Client
-	states          []*api.State  // All states (for replay mode)
-	stateBuffer     []StateBuffer // Buffered states with timestamps (for live mode)
-	currentStateIdx int
-	displayStateIdx int // Index in buffer we're currently displaying
-	lastUpdate      time.Time
-	lastPoll        time.Time
-	turnProgress    float64 // 0.0 to 1.0 progress within current turn
-	currentTurn     float64 // Continuous current turn with sub-turn precision
-	cities          map[string]*CityDisplay
-	movements       []*MovementDisplay
-	playerColors    map[string]color.RGBA
-	colorPalette    []color.RGBA
-	playerList      []string
-	offscreen       *ebiten.Image
-	isLiveMode      bool          // true if using live API, false if replay mode
-	animationStart  time.Time     // When we started animating current turn
-	turnDuration    time.Duration // Duration for current turn animation
+	apiURL           string
+	httpClient       *http.Client
+	states           []*api.State  // All states (for replay mode)
+	stateBuffer      []StateBuffer // Buffered states with timestamps (for live mode)
+	currentStateIdx  int
+	displayStateIdx  int // Index in buffer we're currently displaying
+	lastUpdate       time.Time
+	lastPoll         time.Time
+	turnProgress     float64 // 0.0 to 1.0 progress within current turn
+	currentTurn      float64 // Continuous current turn with sub-turn precision
+	cities           map[string]*CityDisplay
+	movements        []*MovementDisplay
+	playerColors     map[string]color.RGBA
+	colorPalette     []color.RGBA
+	playerList       []string
+	offscreen        *ebiten.Image
+	isLiveMode       bool             // true if using live API, false if replay mode
+	animationStart   time.Time        // When we started animating current turn
+	turnDuration     time.Duration    // Duration for current turn animation
+	screenWidth      int              // Current screen width
+	screenHeight     int              // Current screen height
+	movementStartMap map[string]int64 // Cache of movement ID -> start turn
+	tickCounter      int              // Frame counter for sprite animations
+	humanUI          *HumanUI         // Human interaction UI (optional)
 }
 
 // Player colors palette
@@ -118,13 +125,16 @@ func NewGame(filename string) (*Game, error) {
 	}
 
 	game := &Game{
-		states:       states,
-		lastUpdate:   time.Now(),
-		cities:       make(map[string]*CityDisplay),
-		playerColors: make(map[string]color.RGBA),
-		colorPalette: colors,
-		offscreen:    ebiten.NewImage(screenWidth, screenHeight),
-		isLiveMode:   false,
+		states:           states,
+		lastUpdate:       time.Now(),
+		cities:           make(map[string]*CityDisplay),
+		playerColors:     make(map[string]color.RGBA),
+		colorPalette:     colors,
+		offscreen:        ebiten.NewImage(screenWidth, screenHeight),
+		isLiveMode:       false,
+		screenWidth:      screenWidth,
+		screenHeight:     screenHeight,
+		movementStartMap: make(map[string]int64),
 	}
 
 	game.initializeCities()
@@ -140,18 +150,26 @@ func NewGameLive(apiURL string) (*Game, error) {
 	}
 
 	game := &Game{
-		apiURL:          apiURL,
-		httpClient:      &http.Client{Timeout: 5 * time.Second},
-		states:          []*api.State{},
-		stateBuffer:     make([]StateBuffer, 0, stateBufferSize),
-		lastUpdate:      time.Now(),
-		lastPoll:        time.Now(),
-		cities:          make(map[string]*CityDisplay),
-		playerColors:    make(map[string]color.RGBA),
-		colorPalette:    colors,
-		offscreen:       ebiten.NewImage(screenWidth, screenHeight),
-		isLiveMode:      true,
-		displayStateIdx: -1,
+		apiURL:           apiURL,
+		httpClient:       &http.Client{Timeout: 5 * time.Second},
+		states:           []*api.State{},
+		stateBuffer:      make([]StateBuffer, 0, stateBufferSize),
+		lastUpdate:       time.Now(),
+		lastPoll:         time.Now(),
+		cities:           make(map[string]*CityDisplay),
+		playerColors:     make(map[string]color.RGBA),
+		colorPalette:     colors,
+		offscreen:        ebiten.NewImage(screenWidth, screenHeight),
+		isLiveMode:       true,
+		displayStateIdx:  -1,
+		screenWidth:      screenWidth,
+		screenHeight:     screenHeight,
+		movementStartMap: make(map[string]int64),
+	}
+
+	// Fetch historical data first for the graph
+	if err := game.fetchStateHistory(); err != nil {
+		log.Printf("Warning: Failed to fetch state history: %v", err)
 	}
 
 	// Try to fetch initial state
@@ -160,6 +178,49 @@ func NewGameLive(apiURL string) (*Game, error) {
 	}
 
 	return game, nil
+}
+
+func (g *Game) fetchStateHistory() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, "GET", g.apiURL+"/v1/state:history", nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %v", err)
+	}
+
+	resp, err := g.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to fetch history: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response: %v", err)
+	}
+
+	historyResponse := api.GetStateHistoryResponse{}
+	if err := protojson.Unmarshal(body, &historyResponse); err != nil {
+		return fmt.Errorf("failed to parse JSON: %v", err)
+	}
+
+	// Store all historical states
+	g.states = historyResponse.States
+
+	// Initialize cities and colors from history if we have data
+	if len(g.states) > 0 {
+		g.initializeCities()
+		g.assignPlayerColors()
+		log.Printf("Fetched %d historical states for graphing", len(g.states))
+	}
+
+	return nil
 }
 
 func (g *Game) pollServerState() error {
@@ -211,6 +272,7 @@ func (g *Game) pollServerState() error {
 		g.displayStateIdx = -1
 		g.currentTurn = 0
 		g.animationStart = time.Time{}
+		g.movementStartMap = make(map[string]int64)
 	}
 
 	// Check if this is a new state
@@ -232,11 +294,9 @@ func (g *Game) pollServerState() error {
 			}
 		}
 
-		// Also add to states list for compatibility
+		// Also add to states list for graph history
+		// Don't limit states list - keep full history for graphing
 		g.states = append(g.states, stateResponse.State)
-		if len(g.states) > stateBufferSize {
-			g.states = g.states[1:]
-		}
 
 		// Initialize cities on first state
 		if len(g.cities) == 0 {
@@ -262,7 +322,7 @@ func (g *Game) initializeCities() {
 		return
 	}
 
-	// Arrange cities in a circle or grid
+	// Arrange cities in a circle or grid using logical coordinates (not dynamic screen size)
 	centerX, centerY := float64(screenWidth)/2, float64(screenHeight)/2
 	radius := float64(min(screenWidth, screenHeight)) * 0.3
 
@@ -314,7 +374,15 @@ func (g *Game) assignPlayerColors() {
 }
 
 func (g *Game) Update() error {
+	g.tickCounter++ // Increment tick counter for sprite animations
 	now := time.Now()
+
+	// Update human UI if present
+	if g.humanUI != nil {
+		if err := g.humanUI.Update(); err != nil {
+			return err
+		}
+	}
 
 	// Poll server in live mode
 	if g.isLiveMode && now.Sub(g.lastPoll) >= pollInterval {
@@ -474,8 +542,16 @@ func (g *Game) updateMovements() {
 			toCity, toExists := g.cities[to.City]
 
 			if fromExists && toExists {
-				// Calculate movement start time (when it was created)
-				startTurn := g.findMovementStartTurn(movement)
+				// Create unique movement ID
+				movementID := getMovementID(movement)
+
+				// Get or set start turn for this movement
+				startTurn, exists := g.movementStartMap[movementID]
+				if !exists {
+					// First time seeing this movement - record current turn as start
+					startTurn = currentState.Turn
+					g.movementStartMap[movementID] = startTurn
+				}
 
 				// Calculate smooth progress based on continuous time
 				totalDuration := float64(movement.ArrivingTurn - startTurn)
@@ -514,33 +590,16 @@ func (g *Game) updateMovements() {
 	}
 }
 
-// findMovementStartTurn determines when a movement first appeared in the game states
-func (g *Game) findMovementStartTurn(targetMovement *api.Movement) int64 {
-	// Search in appropriate state source
-	var statesToSearch []*api.State
-
-	if g.isLiveMode {
-		// In live mode, search through buffered states
-		for _, buf := range g.stateBuffer {
-			statesToSearch = append(statesToSearch, buf.state)
-		}
-	} else {
-		statesToSearch = g.states
+// getMovementID creates a unique identifier for a movement
+func getMovementID(movement *api.Movement) string {
+	var toStr string
+	switch to := movement.To.(type) {
+	case *api.Movement_City:
+		toStr = to.City
+	case *api.Movement_Mine:
+		toStr = "mine_" + to.Mine
 	}
-
-	// Find when this movement first appeared by looking through states
-	for _, state := range statesToSearch {
-		for _, movement := range state.Movements {
-			if movement.From == targetMovement.From &&
-				movement.To == targetMovement.To &&
-				movement.ArrivingTurn == targetMovement.ArrivingTurn &&
-				movement.Player == targetMovement.Player {
-				return state.Turn
-			}
-		}
-	}
-	// Fallback: assume it started one turn before arriving
-	return targetMovement.ArrivingTurn - 1
+	return fmt.Sprintf("%s->%s@%d:%s", movement.From, toStr, movement.ArrivingTurn, movement.Player)
 }
 
 func (g *Game) calculateCitySize(troops Troops) float64 {
@@ -583,14 +642,17 @@ func (g *Game) Draw(screen *ebiten.Image) {
 
 	g.drawBackground(screen)
 
+	// Calculate scale factor for game elements
+	scale := float64(g.screenWidth) / float64(screenWidth)
+
 	// Draw cities
 	for _, city := range g.cities {
-		g.drawCity(screen, city)
+		g.drawCity(screen, city, scale)
 	}
 
 	// Draw movements
 	for _, movement := range g.movements {
-		g.drawMovement(screen, movement)
+		g.drawMovement(screen, movement, scale)
 	}
 
 	// Draw turn counter and mode
@@ -613,9 +675,180 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	} else {
 		ebitenutil.DebugPrint(screen, fmt.Sprintf("Waiting for game... [%s]", mode))
 	}
+
+	// Draw player statistics panel
+	g.drawPlayerStats(screen)
+
+	// Draw human UI if present
+	if g.humanUI != nil {
+		g.humanUI.Draw(screen)
+	}
 }
 
-func (g *Game) drawTroopsAtCity(screen *ebiten.Image, city *CityDisplay) {
+func (g *Game) drawPlayerStats(screen *ebiten.Image) {
+	// Draw statistics graph showing troops over time (Age of Empires style)
+	if len(g.states) < 2 {
+		return // Need at least 2 states to draw a graph
+	}
+
+	// Calculate player statistics from history
+	type PlayerHistory struct {
+		TotalUnits []int64
+		Castles    []int
+		Turns      []int64
+	}
+
+	history := make(map[string]*PlayerHistory)
+
+	// Initialize history for all players
+	for _, player := range g.playerList {
+		history[player] = &PlayerHistory{
+			TotalUnits: make([]int64, 0),
+			Castles:    make([]int, 0),
+			Turns:      make([]int64, 0),
+		}
+	}
+
+	// Collect historical data from all states
+	for _, state := range g.states {
+		playerTroops := make(map[string]int64)
+		playerCastles := make(map[string]int)
+
+		// Count troops in cities
+		for _, city := range state.Cities {
+			total := city.Troops["A"] + city.Troops["B"] + city.Troops["C"]
+			playerTroops[city.Player] += total
+			playerCastles[city.Player]++
+		}
+
+		// Count troops in movements
+		for _, movement := range state.Movements {
+			total := movement.Troops["A"] + movement.Troops["B"] + movement.Troops["C"]
+			playerTroops[movement.Player] += total
+		}
+
+		// Record data for each player
+		for player := range history {
+			history[player].TotalUnits = append(history[player].TotalUnits, playerTroops[player])
+			history[player].Castles = append(history[player].Castles, playerCastles[player])
+			history[player].Turns = append(history[player].Turns, state.Turn)
+		}
+	}
+
+	// Draw graph panel at the bottom
+	graphHeight := 200.0
+	graphWidth := float64(g.screenWidth) - 20
+	graphX := 10.0
+	graphY := float64(g.screenHeight) - graphHeight - 10
+
+	// Draw semi-transparent background
+	panelImg := ebiten.NewImage(int(graphWidth), int(graphHeight))
+	panelImg.Fill(color.RGBA{0, 0, 0, 200})
+
+	op := &ebiten.DrawImageOptions{}
+	op.GeoM.Translate(graphX, graphY)
+	screen.DrawImage(panelImg, op)
+
+	// Draw title
+	ebitenutil.DebugPrintAt(screen, "=== TROOPS OVER TIME ===", int(graphX+10), int(graphY+5))
+
+	// Calculate graph area
+	plotX := graphX + 50
+	plotY := graphY + 30
+	plotWidth := graphWidth - 70
+	plotHeight := graphHeight - 50
+
+	// Find max values for scaling
+	maxUnits := int64(1)
+	maxTurn := int64(1)
+	for _, ph := range history {
+		for _, units := range ph.TotalUnits {
+			if units > maxUnits {
+				maxUnits = units
+			}
+		}
+		if len(ph.Turns) > 0 && ph.Turns[len(ph.Turns)-1] > maxTurn {
+			maxTurn = ph.Turns[len(ph.Turns)-1]
+		}
+	}
+
+	// Draw grid lines
+	gridColor := color.RGBA{60, 60, 70, 255}
+	for i := 0; i <= 5; i++ {
+		y := plotY + float64(i)*plotHeight/5
+		vector.StrokeLine(screen, float32(plotX), float32(y), float32(plotX+plotWidth), float32(y), 1, gridColor, false)
+
+		// Y-axis labels
+		labelValue := maxUnits * int64(5-i) / 5
+		ebitenutil.DebugPrintAt(screen, fmt.Sprintf("%d", labelValue), int(graphX+5), int(y-6))
+	}
+
+	// Draw axes
+	axisColor := color.RGBA{150, 150, 150, 255}
+	vector.StrokeLine(screen, float32(plotX), float32(plotY), float32(plotX), float32(plotY+plotHeight), 2, axisColor, false)
+	vector.StrokeLine(screen, float32(plotX), float32(plotY+plotHeight), float32(plotX+plotWidth), float32(plotY+plotHeight), 2, axisColor, false)
+
+	// Draw lines for each player
+	for _, player := range g.playerList {
+		ph := history[player]
+		if len(ph.TotalUnits) < 2 {
+			continue
+		}
+
+		playerColor := g.playerColors[player]
+
+		// Draw line connecting points
+		for i := 0; i < len(ph.TotalUnits)-1; i++ {
+			x1 := plotX + (float64(ph.Turns[i])/float64(maxTurn))*plotWidth
+			y1 := plotY + plotHeight - (float64(ph.TotalUnits[i])/float64(maxUnits))*plotHeight
+			x2 := plotX + (float64(ph.Turns[i+1])/float64(maxTurn))*plotWidth
+			y2 := plotY + plotHeight - (float64(ph.TotalUnits[i+1])/float64(maxUnits))*plotHeight
+
+			vector.StrokeLine(screen, float32(x1), float32(y1), float32(x2), float32(y2), 2, playerColor, false)
+		}
+
+		// Draw current value indicator
+		if len(ph.TotalUnits) > 0 {
+			lastIdx := len(ph.TotalUnits) - 1
+			x := plotX + (float64(ph.Turns[lastIdx])/float64(maxTurn))*plotWidth
+			y := plotY + plotHeight - (float64(ph.TotalUnits[lastIdx])/float64(maxUnits))*plotHeight
+
+			// Draw circle at endpoint
+			vector.DrawFilledCircle(screen, float32(x), float32(y), 4, playerColor, false)
+		}
+	}
+
+	// Draw legend
+	legendX := graphX + graphWidth - 150
+	legendY := graphY + 25
+	for i, player := range g.playerList {
+		ph := history[player]
+		playerColor := g.playerColors[player]
+
+		// Draw color box
+		colorBox := ebiten.NewImage(10, 10)
+		colorBox.Fill(playerColor)
+		colorOp := &ebiten.DrawImageOptions{}
+		colorOp.GeoM.Translate(legendX, legendY+float64(i*15))
+		screen.DrawImage(colorBox, colorOp)
+
+		// Draw player name and current stats
+		var currentUnits int64
+		var currentCastles int
+		if len(ph.TotalUnits) > 0 {
+			currentUnits = ph.TotalUnits[len(ph.TotalUnits)-1]
+			currentCastles = ph.Castles[len(ph.Castles)-1]
+		}
+		ebitenutil.DebugPrintAt(screen, fmt.Sprintf("%s: %d (%d)", player, currentUnits, currentCastles),
+			int(legendX+15), int(legendY+float64(i*15)))
+	}
+
+	// Draw X-axis label
+	ebitenutil.DebugPrintAt(screen, "Turn", int(plotX+plotWidth/2-10), int(plotY+plotHeight+15))
+	ebitenutil.DebugPrintAt(screen, "Units", int(graphX+5), int(plotY-15))
+}
+
+func (g *Game) drawTroopsAtCity(screen *ebiten.Image, city *CityDisplay, scale float64) {
 	troopTypes := []string{"A", "B", "C"}
 	playerColor := g.playerColors[city.Player]
 
@@ -623,28 +856,39 @@ func (g *Game) drawTroopsAtCity(screen *ebiten.Image, city *CityDisplay) {
 		count := city.Troops[troopType]
 		if count > 0 {
 			angle := 2 * math.Pi * float64(i) / 3 // Distribute around city
-			offset := city.Size/2 + 15
-			troopX := city.X + offset*math.Cos(angle)
-			troopY := city.Y + offset*math.Sin(angle)
-			troopSize := g.calculateTroopSize(count)
+			offset := (city.Size/2 + 15) * scale
+			troopX := city.X*scale + offset*math.Cos(angle)
+			troopY := city.Y*scale + offset*math.Sin(angle)
 
-			g.drawTroop(screen, troopType, float32(troopX), float32(troopY), float32(troopSize), playerColor)
+			// Draw oval shadow marker below troop
+			// Make color less strong (30% opacity)
+			shadowColor := color.RGBA{
+				R: playerColor.R,
+				G: playerColor.G,
+				B: playerColor.B,
+				A: 76, // 30% of 255
+			}
+			// Center better (add sprite width offset), smaller size, more down
+			ovalCenterX := float32(troopX + 8*scale)  // Center it better
+			ovalCenterY := float32(troopY + 20*scale) // Move it more down
+			ovalRadiusX := float32(12 * scale)        // Smaller width
+			ovalRadiusY := float32(5 * scale)         // Smaller height
+			drawFilledOval(screen, ovalCenterX, ovalCenterY, ovalRadiusX, ovalRadiusY, shadowColor)
+
+			// Draw troop sprite without tint
+			troopSprite := NewTroopSprite(troopType)
+			troopSprite.Draw(screen, g.tickCounter, troopX, troopY, scale, 1.0, 1.0, 1.0, 1.0)
 		}
 	}
 }
 
-func (g *Game) drawMovement(screen *ebiten.Image, movement *MovementDisplay) {
+func (g *Game) drawMovement(screen *ebiten.Image, movement *MovementDisplay, scale float64) {
 	// Calculate current position
-	startX, startY := movement.From.X, movement.From.Y
-	endX, endY := movement.To.X, movement.To.Y
+	startX, startY := movement.From.X*scale, movement.From.Y*scale
+	endX, endY := movement.To.X*scale, movement.To.Y*scale
 
 	currentX := startX + (endX-startX)*movement.Progress
 	currentY := startY + (endY-startY)*movement.Progress
-
-	// Calculate direction angle for troop orientation
-	dirX := endX - startX
-	dirY := endY - startY
-	angle := math.Atan2(dirY, dirX)
 
 	playerColor := g.playerColors[movement.Player]
 	troopTypes := []string{"A", "B", "C"}
@@ -654,27 +898,87 @@ func (g *Game) drawMovement(screen *ebiten.Image, movement *MovementDisplay) {
 		count := movement.Troops[troopType]
 		if count > 0 {
 			// Offset troops slightly to avoid overlap
-			offsetX := currentX + float64((i-1)*8)
-			offsetY := currentY + float64((i-1)*8)
-			troopSize := g.calculateTroopSize(count)
+			offsetX := currentX + float64((i-1)*8)*scale
+			offsetY := currentY + float64((i-1)*8)*scale
 
-			g.drawOrientedTroop(screen, troopType, float32(offsetX), float32(offsetY), float32(troopSize), float32(angle), playerColor)
+			// Draw oval shadow marker below troop
+			// Make color less strong (30% opacity)
+			shadowColor := color.RGBA{
+				R: playerColor.R,
+				G: playerColor.G,
+				B: playerColor.B,
+				A: 76, // 30% of 255
+			}
+			// Center better (add sprite width offset), smaller size, more down
+			ovalCenterX := float32(offsetX + 8*scale)  // Center it better
+			ovalCenterY := float32(offsetY + 20*scale) // Move it more down
+			ovalRadiusX := float32(12 * scale)         // Smaller width
+			ovalRadiusY := float32(5 * scale)          // Smaller height
+			drawFilledOval(screen, ovalCenterX, ovalCenterY, ovalRadiusX, ovalRadiusY, shadowColor)
+
+			// Draw troop sprite without tint
+			troopSprite := NewTroopSprite(troopType)
+			troopSprite.Draw(screen, g.tickCounter, offsetX, offsetY, scale, 1.0, 1.0, 1.0, 1.0)
 		}
 	}
 }
 
+// drawFilledOval draws a filled oval/ellipse at the given center with the specified radii
+func drawFilledOval(screen *ebiten.Image, centerX, centerY, radiusX, radiusY float32, col color.RGBA) {
+	// Draw an approximation using a path with many points
+	var path vector.Path
+	segments := 32
+	for i := 0; i <= segments; i++ {
+		angle := 2 * math.Pi * float64(i) / float64(segments)
+		x := centerX + radiusX*float32(math.Cos(angle))
+		y := centerY + radiusY*float32(math.Sin(angle))
+		if i == 0 {
+			path.MoveTo(x, y)
+		} else {
+			path.LineTo(x, y)
+		}
+	}
+	path.Close()
+
+	vertices, indices := path.AppendVerticesAndIndicesForFilling(nil, nil)
+	for i := range vertices {
+		vertices[i].ColorR = float32(col.R) / 255.0
+		vertices[i].ColorG = float32(col.G) / 255.0
+		vertices[i].ColorB = float32(col.B) / 255.0
+		vertices[i].ColorA = float32(col.A) / 255.0
+	}
+
+	// Initialize emptySubImage if needed
+	if emptySubImage == nil {
+		emptySubImage = ebiten.NewImage(3, 3)
+		emptySubImage.Fill(color.White)
+	}
+
+	screen.DrawTriangles(vertices, indices, emptySubImage, &ebiten.DrawTrianglesOptions{
+		FillRule: ebiten.NonZero,
+	})
+}
+
+var emptySubImage *ebiten.Image
+
 func (g *Game) drawTroop(screen *ebiten.Image, troopType string, x, y, size float32, playerColor color.RGBA) {
-	g.drawOrientedTroop(screen, troopType, x, y, size, 0, playerColor)
+	// No longer used - kept for compatibility
 }
 
 func (g *Game) drawOrientedTroop(screen *ebiten.Image, troopType string, x, y, size, angle float32, playerColor color.RGBA) {
-	// Draw simple filled rectangles for all troop types
-	halfSize := float64(size / 2)
-	ebitenutil.DrawRect(screen, float64(x)-halfSize, float64(y)-halfSize, float64(size), float64(size), playerColor)
+	// No longer used - kept for compatibility
 }
 
 func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
-	return screenWidth, screenHeight
+	// Make it square based on the smaller dimension
+	size := outsideWidth
+	if outsideHeight < outsideWidth {
+		size = outsideHeight
+	}
+	// Update the game's screen dimensions
+	g.screenWidth = size
+	g.screenHeight = size
+	return size, size
 }
 
 func min(a, b int) int {
@@ -684,12 +988,86 @@ func min(a, b int) int {
 	return b
 }
 
+func newJSONRequest(ctx context.Context, method, url string, body []byte) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	return req, nil
+}
+
 func main() {
 	var game *Game
 	var err error
 
-	// Check if running in live mode or replay mode
-	if len(os.Args) < 2 {
+	// Check command line arguments for human mode
+	// Usage:
+	//   ui-engine-v2                              # watch mode
+	//   ui-engine-v2 <file>                       # replay mode
+	//   ui-engine-v2 --human <player-name>        # human interactive mode
+	var playerName string
+	var playerToken string
+
+	if len(os.Args) >= 3 && os.Args[1] == "--human" {
+		playerName = os.Args[2]
+
+		// Register the player
+		apiURL := defaultAPIURL
+		if len(os.Args) >= 4 {
+			apiURL = os.Args[3]
+		}
+
+		game, err = NewGameLive(apiURL)
+		if err != nil {
+			log.Fatalf("Failed to connect to server: %v", err)
+		}
+
+		// Register player
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		registerReq := &api.RegisterRequest{Name: playerName}
+		jsonData, err := protojson.Marshal(registerReq)
+		if err != nil {
+			log.Fatalf("Failed to marshal register request: %v", err)
+		}
+
+		req, err := newJSONRequest(ctx, "POST", apiURL+"/v1/register", jsonData)
+		if err != nil {
+			log.Fatalf("Failed to create register request: %v", err)
+		}
+
+		resp, err := game.httpClient.Do(req)
+		if err != nil {
+			log.Fatalf("Failed to register player: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != 200 {
+			body, _ := io.ReadAll(resp.Body)
+			log.Fatalf("Failed to register player: status %d: %s", resp.StatusCode, string(body))
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			log.Fatalf("Failed to read register response: %v", err)
+		}
+
+		registerResp := &api.RegisterResponse{}
+		if err := protojson.Unmarshal(body, registerResp); err != nil {
+			log.Fatalf("Failed to parse register response: %v", err)
+		}
+
+		playerToken = registerResp.Token
+		log.Printf("Registered as player '%s' with ID %s and token %s", playerName, registerResp.Id, playerToken)
+
+		// Create human UI
+		game.humanUI = NewHumanUI(game, playerName, registerResp.Id, playerToken)
+
+		log.Printf("Human interactive mode enabled for player '%s'", playerName)
+
+	} else if len(os.Args) < 2 {
 		log.Println("No file specified, connecting to live server...")
 		apiURL := defaultAPIURL
 		if len(os.Args) == 2 {
@@ -710,6 +1088,7 @@ func main() {
 
 	ebiten.SetWindowSize(screenWidth, screenHeight)
 	ebiten.SetWindowTitle("Mask Invaders Visualization")
+	ebiten.SetWindowResizingMode(ebiten.WindowResizingModeEnabled)
 	ebiten.SetTPS(60)
 	ebiten.SetFPSMode(ebiten.FPSModeVsyncOn)
 
