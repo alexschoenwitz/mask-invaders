@@ -24,7 +24,6 @@ var (
 		troopC: {},
 	}
 
-	// not used yet
 	troopImpact = map[string]map[string]float64{
 		troopA: {
 			troopA: 1.0,
@@ -42,7 +41,73 @@ var (
 			troopC: 1.0,
 		},
 	}
+
+	troopOrder = []string{troopA, troopB, troopC}
 )
+
+func calculateBattle(attackingTroops, defendingTroops map[string]int64) (attackerWins bool, survivingTroops map[string]int64) {
+	// Convert troops to arrays following troopOrder [A, B, C]
+	army1 := make([]float64, 3)
+	army2 := make([]float64, 3)
+	for i, troopType := range troopOrder {
+		army1[i] = float64(attackingTroops[troopType])
+		army2[i] = float64(defendingTroops[troopType])
+	}
+
+	// Calculate total troop counts
+	total1 := 0.0
+	total2 := 0.0
+	for i := 0; i < 3; i++ {
+		total1 += army1[i]
+		total2 += army2[i]
+	}
+
+	// Handle edge cases
+	if total1 == 0 && total2 == 0 {
+		return true, make(map[string]int64)
+	}
+	if total1 == 0 {
+		return false, defendingTroops
+	}
+	if total2 == 0 {
+		return true, attackingTroops
+	}
+
+	// 1. Calculate Combat Effectiveness (Quality)
+	// eff_1 = (army1 @ D @ army2) / (total1 * total2)
+	var eff1, eff2 float64
+	for i := 0; i < 3; i++ {
+		for j := 0; j < 3; j++ {
+			impact := troopImpact[troopOrder[i]][troopOrder[j]]
+			eff1 += army1[i] * impact * army2[j]
+			eff2 += army2[i] * impact * army1[j]
+		}
+	}
+	eff1 /= (total1 * total2)
+	eff2 /= (total1 * total2)
+
+	// 2. Linear Law: Power = Quality * Quantity
+	power1 := eff1 * total1
+	power2 := eff2 * total2
+
+	// 3. Determine winner and calculate survivors
+	survivingTroops = make(map[string]int64)
+	if power1 > power2 {
+		// Attacker wins
+		survivingRatio := (power1 - power2) / power1
+		for i, troopType := range troopOrder {
+			survivingTroops[troopType] = int64(army1[i] * survivingRatio)
+		}
+		return true, survivingTroops
+	} else {
+		// Defender wins
+		survivingRatio := (power2 - power1) / power2
+		for i, troopType := range troopOrder {
+			survivingTroops[troopType] = int64(army2[i] * survivingRatio)
+		}
+		return false, survivingTroops
+	}
+}
 
 func (s *server) run(ctx context.Context) {
 	ticker := time.NewTicker(200 * time.Millisecond)
@@ -101,13 +166,25 @@ func processTurn(currentState *api.State, actions map[string]*api.Action, turnCo
 			fmt.Printf("this should not happen, troops will just disappear")
 			continue
 		}
-		// TODO: calculate battle results and either conquer or not, but at the moment
-		// we have 100% win rate for the attacker just because
-		for troopType, ammount := range movement.Troops {
-			city.Troops[troopType] = ammount
+
+		// Calculate battle results
+		if city.Player == movement.Player {
+			// Friendly reinforcement - just add troops
+			for troopType, ammount := range movement.Troops {
+				city.Troops[troopType] += ammount
+			}
+			newState.Cities[movement.To] = city
+		} else {
+			// Battle!
+			attackerWins, survivingTroops := calculateBattle(movement.Troops, city.Troops)
+			if attackerWins {
+				city.Player = movement.Player
+				city.Troops = survivingTroops
+			} else {
+				city.Troops = survivingTroops
+			}
+			newState.Cities[movement.To] = city
 		}
-		city.Player = movement.Player
-		newState.Cities[movement.To] = city
 	}
 
 	// then process actions

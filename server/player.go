@@ -49,13 +49,11 @@ func (s *server) Register(ctx context.Context, req *api.RegisterRequest) (*api.R
 	}, nil
 }
 
-var (
-	unauthenticatedMethods = map[string]struct{}{
-		api.Server_Register_FullMethodName:        {},
-		api.Server_GetStateHistory_FullMethodName: {},
-		api.Server_GetState_FullMethodName:        {},
-	}
-)
+var unauthenticatedMethods = map[string]struct{}{
+	api.Server_Register_FullMethodName:        {},
+	api.Server_GetStateHistory_FullMethodName: {},
+	api.Server_GetState_FullMethodName:        {},
+}
 
 func serverInterceptor(ctx context.Context,
 	req any,
