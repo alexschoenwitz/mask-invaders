@@ -1,8 +1,8 @@
 syntax = "proto3";
 
-import "google/api/annotations.proto";
-
 package api;
+
+import "google/api/annotations.proto";
 
 option go_package = "github.com/alexschoenwitz/mask-invaders/api";
 
@@ -20,14 +20,10 @@ service Server {
     };
   }
   rpc GetState(GetStateRequest) returns (GetStateResponse) {
-    option (google.api.http) = {
-      get: "/v1/state"
-    };
+    option (google.api.http) = {get: "/v1/state"};
   }
   rpc GetStateHistory(GetStateHistoryRequest) returns (GetStateHistoryResponse) {
-    option (google.api.http) = {
-      get: "/v1/state:history"
-    };
+    option (google.api.http) = {get: "/v1/state:history"};
   }
   rpc PostAction(PostActionRequest) returns (PostActionResponse) {
     option (google.api.http) = {
@@ -68,11 +64,21 @@ message State {
   repeated Movement movements = 2;
   map<string, Distance> distances = 3;
   int64 turn = 4;
+  map<string, Mine> mines = 5;
+}
+
+message Mine {
+  map<string, Resource> resources = 1;
+}
+
+message Resource {
+  int64 amount = 1;
 }
 
 message City {
   string player = 1;
   map<string, int64> troops = 2;
+  map<string, Resource> resources = 3;
 }
 
 message Movement {
