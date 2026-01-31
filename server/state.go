@@ -227,8 +227,8 @@ func processTurn(currentState *api.State, actions map[string]*api.Action, turnCo
 			fmt.Printf("this should not happen, troops will just disappear")
 			continue
 		}
-		for troopType, ammount := range attack.Troops {
-			originCity.Troops[troopType] -= ammount
+		for troopType, amount := range attack.Troops {
+			originCity.Troops[troopType] -= amount
 		}
 	}
 
@@ -320,16 +320,22 @@ func (s *server) GetStateHistory(ctx context.Context, req *api.GetStateHistoryRe
 }
 
 func (s *server) PostAction(ctx context.Context, req *api.PostActionRequest) (*api.PostActionResponse, error) {
-	s.stateLock.RLock()
-	defer s.stateLock.RUnlock()
-
 	token, ok := getPlayerToken(ctx)
 	if !ok {
 		return nil, status.Error(codes.Internal, "could not get player token from context")
 	}
-	if s.players[token].id != req.GetAction().GetPlayer() {
+
+	s.playersLock.RLock()
+	player := s.players[token]
+	s.playersLock.RUnlock()
+
+	if player.id != req.GetAction().GetPlayer() {
 		return nil, status.Error(codes.PermissionDenied, "action player does not match token player")
 	}
+
+	s.stateLock.RLock()
+	currentState := s.currentState
+	s.stateLock.RUnlock()
 
 	// check if the action is valid
 	switch req.GetAction().GetAction().(type) {
@@ -338,15 +344,15 @@ func (s *server) PostAction(ctx context.Context, req *api.PostActionRequest) (*a
 		if attackAction.GetTroops() == nil {
 			return nil, status.Error(codes.InvalidArgument, "troops must be defined")
 		}
-		if s.currentState.Cities[attackAction.GetFrom()] == nil || s.currentState.Cities[attackAction.GetTo()] == nil {
+		if currentState.Cities[attackAction.GetFrom()] == nil || currentState.Cities[attackAction.GetTo()] == nil {
 			return nil, status.Error(codes.InvalidArgument, "invalid from/to city")
 		}
-		for troopType, troopAmmount := range attackAction.GetTroops() {
+		for troopType, troopAmount := range attackAction.GetTroops() {
 			if _, ok := validTroops[troopType]; !ok {
 				return nil, status.Errorf(codes.InvalidArgument, "invalid troop type: %s", troopType)
 			}
-			if troopAmmount <= 0 || s.currentState.Cities[attackAction.GetFrom()].GetTroops()[troopType] < troopAmmount {
-				return nil, status.Errorf(codes.InvalidArgument, "invalid troop ammount for type %s: %d", troopType, troopAmmount)
+			if troopAmount <= 0 || currentState.Cities[attackAction.GetFrom()].GetTroops()[troopType] < troopAmount {
+				return nil, status.Errorf(codes.InvalidArgument, "invalid troop amount for type %s: %d", troopType, troopAmount)
 			}
 		}
 	case *api.Action_None:
@@ -354,7 +360,7 @@ func (s *server) PostAction(ctx context.Context, req *api.PostActionRequest) (*a
 		return nil, status.Error(codes.InvalidArgument, "unknown action type")
 	}
 
-	// register the submitted action based on
+	// register the submitted action
 	s.actionQueue <- req.GetAction()
 
 	return &api.PostActionResponse{}, nil

@@ -60,23 +60,19 @@ func serverInterceptor(ctx context.Context,
 	info *grpc.UnaryServerInfo,
 	handler grpc.UnaryHandler,
 ) (any, error) {
-	// Bypass auth for register
-	if info.FullMethod == api.Server_Register_FullMethodName {
-		return handler(ctx, req)
-	}
-
 	s, ok := info.Server.(*server)
 	if !ok {
 		return nil, status.Error(codes.Internal, "what happened to the server?")
 	}
 
+	// Bypass auth for unauthenticated methods
+	if _, ok := unauthenticatedMethods[info.FullMethod]; ok {
+		return handler(ctx, req)
+	}
+
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
 		return nil, status.Error(codes.Internal, "no metadata in context")
-	}
-
-	if _, ok := unauthenticatedMethods[info.FullMethod]; ok {
-		return handler(ctx, req)
 	}
 
 	authHeaders := md.Get("authorization")
@@ -96,6 +92,8 @@ func isAuthorized(s *server, ctx context.Context) bool {
 		return false
 	}
 
+	s.playersLock.RLock()
+	defer s.playersLock.RUnlock()
 	_, playerExists = s.players[playerToken]
 	return playerExists
 }
