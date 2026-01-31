@@ -40,10 +40,13 @@ func newSprite(
 	}
 }
 
-func (s *Sprite) selectFrame(gameTick int, x, y float64) (*ebiten.Image, *ebiten.DrawImageOptions) {
+func (s *Sprite) selectFrame(gameTick int, x, y float64, tintR, tintG, tintB, tintA float64) (*ebiten.Image, *ebiten.DrawImageOptions) {
 	op := &ebiten.DrawImageOptions{}
 	op.GeoM.Scale(s.scaleX, s.scaleY)
 	fmt.Println("---------------------")
+
+	// Apply color tint
+	op.ColorScale.Scale(float32(tintR), float32(tintG), float32(tintB), float32(tintA))
 
 	op.GeoM.Translate(x, y)
 

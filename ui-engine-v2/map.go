@@ -38,14 +38,23 @@ func init() {
 }
 
 func (g *Game) drawBackground(screen *ebiten.Image) {
-	screen.DrawImage(backgroundSprite.selectFrame(int(g.currentTurn), 0, 0))
+	img, op := backgroundSprite.selectFrame(int(g.currentTurn), 0, 0, 1, 1, 1, 1)
+	screen.DrawImage(img, op)
 }
 
 func (g *Game) drawCity(screen *ebiten.Image, city *CityDisplay) {
 	x, y := city.X, city.Y
 
-	// Draw castle sprite at city position
-	screen.DrawImage(castleSprite.selectFrame(int(g.currentTurn), x-float64(castleSprite.frameWidth)/2, y-float64(castleSprite.frameHeight)/2))
+	// Get player color for tinting the castle
+	playerColor := g.playerColors[city.Player]
+	tintR := float64(playerColor.R) / 255.0
+	tintG := float64(playerColor.G) / 255.0
+	tintB := float64(playerColor.B) / 255.0
+	tintA := float64(playerColor.A) / 255.0
+
+	// Draw castle sprite at city position with player color tint
+	img, op := castleSprite.selectFrame(int(g.currentTurn), x-float64(castleSprite.frameWidth)/2, y-float64(castleSprite.frameHeight)/2, tintR, tintG, tintB, tintA)
+	screen.DrawImage(img, op)
 
 	// Draw city name above the castle
 	ebitenutil.DebugPrintAt(screen, city.Name, int(x-30), int(y-40))
