@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"math"
 	"time"
@@ -91,19 +90,6 @@ func playGame(client *client.Client, playerID string) {
 
 		// Attack with all troops from the attacking city
 		city := state.Cities[attackFrom]
-		if len(city.Troops) == 0 {
-			log.Printf("No troops in city %s", attackFrom)
-			continue
-		}
-
-		noTroops := true
-		for _, ammount := range city.Troops {
-			if ammount > 0 {
-				noTroops = false
-				break
-			}
-		}
-
 		action := &api.PostActionRequest{
 			Action: &api.Action{
 				Player: playerID,
@@ -117,11 +103,6 @@ func playGame(client *client.Client, playerID string) {
 			},
 		}
 
-		if noTroops {
-			fmt.Println("No troops to attack with")
-			action.Action.Action = &api.Action_None{}
-		}
-
 		err = client.PostAction(action)
 		if err != nil {
 			log.Printf("Failed to post action: %v", err)
@@ -130,11 +111,23 @@ func playGame(client *client.Client, playerID string) {
 	}
 }
 
+func hasTroops(c *api.City) bool {
+	for _, ammount := range c.Troops {
+		if ammount > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func findNearestAttack(myCities, enemyCities []string, state *api.State) (string, string) {
 	minDistance := int64(math.MaxInt64)
 	var attackFrom, attackTo string
 
 	for _, myCity := range myCities {
+		if !hasTroops(state.Cities[myCity]) {
+			continue
+		}
 		for _, enemyCity := range enemyCities {
 			distance := getDistance(myCity, enemyCity, state.Distances)
 			if distance < minDistance && distance > 0 {

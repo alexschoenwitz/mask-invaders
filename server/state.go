@@ -255,15 +255,17 @@ func (s *server) StartGame(ctx context.Context, req *api.StartGameRequest) (*api
 	}
 
 	for _, p := range s.players {
-		// do a city per player with equal troops
-		cityName := fmt.Sprintf("City-%s", p.id)
-		initialState.Cities[cityName] = &api.City{
-			Player: p.id,
-			Troops: map[string]int64{
-				troopA: 10,
-				troopB: 10,
-				troopC: 10,
-			},
+		// do a 3 cities per player with equal troops
+		for i := 0; i < 3; i++ {
+			cityName := fmt.Sprintf("City-%s-%d", p.id, i)
+			initialState.Cities[cityName] = &api.City{
+				Player: p.id,
+				Troops: map[string]int64{
+					troopA: 10,
+					troopB: 10,
+					troopC: 10,
+				},
+			}
 		}
 	}
 
