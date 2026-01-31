@@ -142,7 +142,7 @@ func (s *server) run(ctx context.Context) {
 			if !s.gameStarted.Load() {
 				continue
 			}
-			
+
 			// Timer expired, process the turn with whatever actions we have!
 			s.actionsLock.Lock()
 			actions := s.submittedActions
@@ -164,7 +164,7 @@ func (s *server) run(ctx context.Context) {
 			nextState := processTurn(s.currentState, actions, s.turnCount)
 			s.stateHistory = append(s.stateHistory, s.currentState)
 			s.currentState = nextState
-				s.currentState.Turn = s.turnCount
+			s.currentState.Turn = s.turnCount
 			victory := s.checkWinCondition()
 			s.stateLock.Unlock()
 
@@ -481,7 +481,32 @@ func (s *server) PostAction(ctx context.Context, req *api.PostActionRequest) (*a
 			return nil, status.Error(codes.PermissionDenied, "city not owned")
 		}
 		// Don't modify state here anymore - will be done in processTurn
+		c.Troops[createTroopAction.GetType()] += 1
 	case *api.Action_None:
+	case *api.Action_ClaimMine:
+		claimMineAction := req.GetAction().GetClaimMine()
+		// check mine existence and update claimed status
+		mine, ok := currentState.Mines[claimMineAction.GetMine()]
+		if !ok {
+			return nil, status.Error(codes.InvalidArgument, "invalid mine")
+		}
+		if mine.GetClaimed() {
+			return nil, status.Error(codes.PermissionDenied, "mine already claimed")
+		}
+		mine.Claimed = true
+		// add mine resources to player's city
+		city, ok := currentState.Cities[claimMineAction.GetFrom()]
+		if !ok || city.Player != player.id {
+			return nil, status.Error(codes.PermissionDenied, "city not owned")
+		}
+		for resourceType, resource := range mine.GetResources() {
+			cityResources, ok := city.Resources[resourceType]
+			if !ok {
+				cityResources = &api.Resource{Amount: 0}
+				city.Resources[resourceType] = cityResources
+			}
+			cityResources.Amount += resource.GetAmount()
+		}
 	default:
 		return nil, status.Error(codes.InvalidArgument, "unknown action type")
 	}

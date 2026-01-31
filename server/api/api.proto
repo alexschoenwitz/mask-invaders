@@ -70,6 +70,7 @@ message State {
 message Mine {
   string id = 1;
   map<string, Resource> resources = 2;
+  bool claimed = 3;
 }
 
 message Resource {
