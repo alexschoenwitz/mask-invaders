@@ -7,6 +7,7 @@ import (
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/alexschoenwitz/mask-invaders/api/server/api"
 )
@@ -149,11 +150,12 @@ func processTurn(currentState *api.State, actions map[string]*api.Action, turnCo
 	newState := &api.State{
 		Cities:    make(map[string]*api.City),
 		Movements: []*api.Movement{},
-		Distances: currentState.Distances,
+		Distances: currentState.Distances, // WARN: if distances are variable, this will need to be cloned
 	}
+	currentStateCopy := proto.CloneOf(currentState)
 
 	// first process movements
-	for _, movement := range currentState.Movements {
+	for _, movement := range currentStateCopy.Movements {
 		if movement.ArrivingTurn < int64(turnCount) {
 			// still in transit
 			newState.Movements = append(newState.Movements, movement)
@@ -161,30 +163,21 @@ func processTurn(currentState *api.State, actions map[string]*api.Action, turnCo
 		}
 
 		// arrive at destination
-		city := currentState.Cities[movement.To]
+		city := currentStateCopy.Cities[movement.To]
 		if city == nil {
 			fmt.Printf("this should not happen, troops will just disappear")
 			continue
 		}
 
-		// Calculate battle results
-		if city.Player == movement.Player {
-			// Friendly reinforcement - just add troops
-			for troopType, ammount := range movement.Troops {
-				city.Troops[troopType] += ammount
-			}
-			newState.Cities[movement.To] = city
+		// Battle!
+		attackerWins, survivingTroops := calculateBattle(movement.Troops, city.Troops)
+		if attackerWins {
+			city.Player = movement.Player
+			city.Troops = survivingTroops
 		} else {
-			// Battle!
-			attackerWins, survivingTroops := calculateBattle(movement.Troops, city.Troops)
-			if attackerWins {
-				city.Player = movement.Player
-				city.Troops = survivingTroops
-			} else {
-				city.Troops = survivingTroops
-			}
-			newState.Cities[movement.To] = city
+			city.Troops = survivingTroops
 		}
+		newState.Cities[movement.To] = city
 	}
 
 	// then process actions
@@ -194,9 +187,9 @@ func processTurn(currentState *api.State, actions map[string]*api.Action, turnCo
 		}
 		attack := action.GetAttack()
 		// create a new movement
-		distance, ok := currentState.Distances[attack.To+attack.From]
+		distance, ok := currentStateCopy.Distances[attack.To+attack.From]
 		if !ok {
-			distance = currentState.Distances[attack.From+attack.To]
+			distance = currentStateCopy.Distances[attack.From+attack.To]
 		}
 
 		newMovement := &api.Movement{
@@ -209,7 +202,7 @@ func processTurn(currentState *api.State, actions map[string]*api.Action, turnCo
 		newState.Movements = append(newState.Movements, newMovement)
 
 		// remove troops from the origin city
-		originCity := currentState.Cities[attack.From]
+		originCity := currentStateCopy.Cities[attack.From]
 		if originCity == nil {
 			fmt.Printf("this should not happen, troops will just disappear")
 			continue
@@ -217,10 +210,11 @@ func processTurn(currentState *api.State, actions map[string]*api.Action, turnCo
 		for troopType, ammount := range attack.Troops {
 			originCity.Troops[troopType] -= ammount
 		}
+		newState.Cities[attack.From] = originCity
 	}
 
 	// finally, copy over unchanged cities
-	for cityName, city := range currentState.Cities {
+	for cityName, city := range currentStateCopy.Cities {
 		if newState.Cities[cityName] == nil {
 			newState.Cities[cityName] = city
 		}

@@ -50,7 +50,7 @@ func main() {
 	grpcServer := grpc.NewServer(grpc.UnaryInterceptor(serverInterceptor))
 	s := &server{
 		submittedActions: make(map[string]*api.Action),
-		actionQueue:      make(chan *api.Action, 10),
+		actionQueue:      make(chan *api.Action, 100),
 		players:          make(map[string]*player),
 	}
 	go s.run(ctx)
