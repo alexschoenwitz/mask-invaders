@@ -49,6 +49,14 @@ func (s *server) Register(ctx context.Context, req *api.RegisterRequest) (*api.R
 	}, nil
 }
 
+var (
+	unauthenticatedMethods = map[string]struct{}{
+		api.Server_Register_FullMethodName:        {},
+		api.Server_GetStateHistory_FullMethodName: {},
+		api.Server_GetState_FullMethodName:        {},
+	}
+)
+
 func serverInterceptor(ctx context.Context,
 	req any,
 	info *grpc.UnaryServerInfo,
@@ -69,9 +77,7 @@ func serverInterceptor(ctx context.Context,
 		return nil, status.Error(codes.Internal, "no metadata in context")
 	}
 
-	// All GET requests are authorized
-	methods := md.Get("x-http-method")
-	if len(methods) > 0 && methods[0] == "GET" {
+	if _, ok := unauthenticatedMethods[info.FullMethod]; ok {
 		return handler(ctx, req)
 	}
 
