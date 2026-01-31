@@ -12,6 +12,8 @@ import (
 	"os"
 	"time"
 
+	_ "image/png"
+
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -78,7 +80,6 @@ type Game struct {
 	playerColors    map[string]color.RGBA
 	colorPalette    []color.RGBA
 	playerList      []string
-	frameCount      int
 	offscreen       *ebiten.Image
 	isLiveMode      bool          // true if using live API, false if replay mode
 	animationStart  time.Time     // When we started animating current turn
@@ -575,6 +576,8 @@ func (g *Game) calculateTroopSize(count int64) float64 {
 func (g *Game) Draw(screen *ebiten.Image) {
 	screen.Fill(color.RGBA{20, 20, 30, 255})
 
+	g.drawBackground(screen)
+
 	// Draw cities
 	for _, city := range g.cities {
 		g.drawCity(screen, city)
@@ -605,35 +608,6 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	} else {
 		ebitenutil.DebugPrint(screen, fmt.Sprintf("Waiting for game... [%s]", mode))
 	}
-}
-
-func (g *Game) drawCity(screen *ebiten.Image, city *CityDisplay) {
-	playerColor := g.playerColors[city.Player]
-	x, y := int(city.X), int(city.Y)
-	size := int(city.Size)
-	halfSize := size / 2
-
-	// Draw simple city box using ebitenutil
-	ebitenutil.DrawRect(screen, float64(x-halfSize), float64(y-halfSize), float64(size), 2, playerColor)
-	ebitenutil.DrawRect(screen, float64(x-halfSize), float64(y+halfSize-2), float64(size), 2, playerColor)
-	ebitenutil.DrawRect(screen, float64(x-halfSize), float64(y-halfSize), 2, float64(size), playerColor)
-	ebitenutil.DrawRect(screen, float64(x+halfSize-2), float64(y-halfSize), 2, float64(size), playerColor)
-
-	// Draw city name
-	ebitenutil.DebugPrintAt(screen, city.Name, x-halfSize+2, y-halfSize-15)
-
-	// Draw troop counts inside the city
-	troopTypes := []string{"A", "B", "C"}
-	yOffset := y - halfSize + 10
-	for _, troopType := range troopTypes {
-		count := city.Troops[troopType]
-		text := fmt.Sprintf("%s:%d", troopType, count)
-		ebitenutil.DebugPrintAt(screen, text, x-halfSize+5, yOffset)
-		yOffset += 12
-	}
-
-	// Draw troops around the city
-	g.drawTroopsAtCity(screen, city)
 }
 
 func (g *Game) drawTroopsAtCity(screen *ebiten.Image, city *CityDisplay) {
