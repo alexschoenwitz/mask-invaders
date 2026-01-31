@@ -4,10 +4,10 @@ generate:
 fix:
 	@buf format -w
 
-run-server: generate
+run-server:
 	@go run ./server/...
 
-run-ui: generate
+run-ui:
 	@go run ./ui-engine/...
 
 run-game:
