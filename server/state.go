@@ -60,7 +60,7 @@ func calculateBattle(attackingTroops, defendingTroops map[string]int64) (attacke
 	// Calculate total troop counts
 	total1 := 0.0
 	total2 := 0.0
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		total1 += army1[i]
 		total2 += army2[i]
 	}
@@ -79,8 +79,8 @@ func calculateBattle(attackingTroops, defendingTroops map[string]int64) (attacke
 	// 1. Calculate Combat Effectiveness (Quality)
 	// eff_1 = (army1 @ D @ army2) / (total1 * total2)
 	var eff1, eff2 float64
-	for i := 0; i < 3; i++ {
-		for j := 0; j < 3; j++ {
+	for i := range 3 {
+		for j := range 3 {
 			impact := troopImpact[troopOrder[i]][troopOrder[j]]
 			eff1 += army1[i] * impact * army2[j]
 			eff2 += army2[i] * impact * army1[j]
@@ -256,7 +256,7 @@ func (s *server) StartGame(ctx context.Context, req *api.StartGameRequest) (*api
 
 	for _, p := range s.players {
 		// do a 3 cities per player with equal troops
-		for i := 0; i < 3; i++ {
+		for i := range 3 {
 			cityName := fmt.Sprintf("City-%s-%d", p.id, i)
 			initialState.Cities[cityName] = &api.City{
 				Player: p.id,
