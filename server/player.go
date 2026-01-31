@@ -11,8 +11,10 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+type contextKey string
+
 const (
-	playerTokenKey string = "playerToken"
+	playerTokenKey contextKey = "playerToken"
 )
 
 type player struct {
