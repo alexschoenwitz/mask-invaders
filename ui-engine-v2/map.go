@@ -43,28 +43,35 @@ func (g *Game) drawBackground(screen *ebiten.Image) {
 	frameWidth := backgroundSprite.image.Bounds().Dx() / backgroundSprite.spriteColumns
 	effectiveFrameSize := float64(frameWidth) * 0.8 // 80% after 10% crop on each side
 	scale := float64(g.screenWidth) / effectiveFrameSize
-	
-	totalFrames := backgroundSprite.spriteRows * backgroundSprite.spriteColumns
-	currentFrame := int(g.currentTurn) % totalFrames
-	
+
+	// Change background every 5 turns
+	// Pass turn multiplied by speed so that sprite division shows all frames
+	gameTick := (int(g.currentTurn) / 5) * backgroundSprite.speed
+
 	// Draw current frame at full opacity
-	img, op := backgroundSprite.selectFrameWithScale(currentFrame, 0, 0, scale, scale, 1, 1, 1, 1)
+	img, op := backgroundSprite.selectFrameWithScale(gameTick, 0, 0, scale, scale, 1, 1, 1, 1)
 	screen.DrawImage(img, op)
 }
 
 func (g *Game) drawCity(screen *ebiten.Image, city *CityDisplay, scale float64) {
 	x, y := city.X*scale, city.Y*scale
 
-	// Get player color for tinting the castle
+	// Get player color for the shadow marker
 	playerColor := g.playerColors[city.Player]
-	tintR := float64(playerColor.R) / 255.0
-	tintG := float64(playerColor.G) / 255.0
-	tintB := float64(playerColor.B) / 255.0
-	tintA := float64(playerColor.A) / 255.0
 
-	// Draw castle sprite at city position with player color tint and scale
+	// Draw oval shadow marker below castle
+	ovalCenterX := float32(x)
+	ovalCenterY := float32(y + 30*scale)
+	ovalRadiusX := float32(40 * scale)
+	ovalRadiusY := float32(15 * scale)
+	drawFilledOval(screen, ovalCenterX, ovalCenterY, ovalRadiusX, ovalRadiusY, playerColor)
+
+	// Draw castle sprite without tint
 	castleScale := 2.0 * scale // Castles are drawn at 2x base size
-	img, op := castleSprite.selectFrameWithScale(int(g.currentTurn), x-float64(castleSprite.frameWidth)*castleScale/2, y-float64(castleSprite.frameHeight)*castleScale/2, castleScale, castleScale, tintR, tintG, tintB, tintA)
+	// Change castle animation every 5 turns
+	// Pass turn multiplied by speed so that sprite division shows all frames
+	gameTick := (int(g.currentTurn) / 5) * castleSprite.speed
+	img, op := castleSprite.selectFrameWithScale(gameTick, x-float64(castleSprite.frameWidth)*castleScale/2, y-float64(castleSprite.frameHeight)*castleScale/2, castleScale, castleScale, 1.0, 1.0, 1.0, 1.0)
 	screen.DrawImage(img, op)
 
 	// Draw city name above the castle

@@ -16,6 +16,7 @@ import (
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
+	"github.com/hajimehoshi/ebiten/v2/vector"
 	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/alexschoenwitz/mask-invaders/api/server/api"
@@ -81,12 +82,13 @@ type Game struct {
 	colorPalette     []color.RGBA
 	playerList       []string
 	offscreen        *ebiten.Image
-	isLiveMode       bool          // true if using live API, false if replay mode
-	animationStart   time.Time     // When we started animating current turn
-	turnDuration     time.Duration // Duration for current turn animation
-	screenWidth      int           // Current screen width
-	screenHeight     int           // Current screen height
+	isLiveMode       bool             // true if using live API, false if replay mode
+	animationStart   time.Time        // When we started animating current turn
+	turnDuration     time.Duration    // Duration for current turn animation
+	screenWidth      int              // Current screen width
+	screenHeight     int              // Current screen height
 	movementStartMap map[string]int64 // Cache of movement ID -> start turn
+	tickCounter      int              // Frame counter for sprite animations
 }
 
 // Player colors palette
@@ -324,6 +326,7 @@ func (g *Game) assignPlayerColors() {
 }
 
 func (g *Game) Update() error {
+	g.tickCounter++ // Increment tick counter for sprite animations
 	now := time.Now()
 
 	// Poll server in live mode
@@ -486,7 +489,7 @@ func (g *Game) updateMovements() {
 			if fromExists && toExists {
 				// Create unique movement ID
 				movementID := getMovementID(movement)
-				
+
 				// Get or set start turn for this movement
 				startTurn, exists := g.movementStartMap[movementID]
 				if !exists {
@@ -622,9 +625,6 @@ func (g *Game) Draw(screen *ebiten.Image) {
 func (g *Game) drawTroopsAtCity(screen *ebiten.Image, city *CityDisplay, scale float64) {
 	troopTypes := []string{"A", "B", "C"}
 	playerColor := g.playerColors[city.Player]
-	tintR := float64(playerColor.R) / 255.0
-	tintG := float64(playerColor.G) / 255.0
-	tintB := float64(playerColor.B) / 255.0
 
 	for i, troopType := range troopTypes {
 		count := city.Troops[troopType]
@@ -634,8 +634,16 @@ func (g *Game) drawTroopsAtCity(screen *ebiten.Image, city *CityDisplay, scale f
 			troopX := city.X*scale + offset*math.Cos(angle)
 			troopY := city.Y*scale + offset*math.Sin(angle)
 
+			// Draw oval shadow marker below troop
+			ovalCenterX := float32(troopX)
+			ovalCenterY := float32(troopY + 15*scale)
+			ovalRadiusX := float32(20 * scale)
+			ovalRadiusY := float32(8 * scale)
+			drawFilledOval(screen, ovalCenterX, ovalCenterY, ovalRadiusX, ovalRadiusY, playerColor)
+
+			// Draw troop sprite without tint
 			troopSprite := NewTroopSprite(troopType)
-			troopSprite.Draw(screen, int(g.currentTurn), troopX, troopY, scale, tintR, tintG, tintB, 1.0)
+			troopSprite.Draw(screen, g.tickCounter, troopX, troopY, scale, 1.0, 1.0, 1.0, 1.0)
 		}
 	}
 }
@@ -649,9 +657,6 @@ func (g *Game) drawMovement(screen *ebiten.Image, movement *MovementDisplay, sca
 	currentY := startY + (endY-startY)*movement.Progress
 
 	playerColor := g.playerColors[movement.Player]
-	tintR := float64(playerColor.R) / 255.0
-	tintG := float64(playerColor.G) / 255.0
-	tintB := float64(playerColor.B) / 255.0
 	troopTypes := []string{"A", "B", "C"}
 
 	// Draw troops in formation pointing toward destination
@@ -662,11 +667,57 @@ func (g *Game) drawMovement(screen *ebiten.Image, movement *MovementDisplay, sca
 			offsetX := currentX + float64((i-1)*8)*scale
 			offsetY := currentY + float64((i-1)*8)*scale
 
+			// Draw oval shadow marker below troop
+			ovalCenterX := float32(offsetX)
+			ovalCenterY := float32(offsetY + 15*scale)
+			ovalRadiusX := float32(20 * scale)
+			ovalRadiusY := float32(8 * scale)
+			drawFilledOval(screen, ovalCenterX, ovalCenterY, ovalRadiusX, ovalRadiusY, playerColor)
+
+			// Draw troop sprite without tint
 			troopSprite := NewTroopSprite(troopType)
-			troopSprite.Draw(screen, int(g.currentTurn), offsetX, offsetY, scale, tintR, tintG, tintB, 1.0)
+			troopSprite.Draw(screen, g.tickCounter, offsetX, offsetY, scale, 1.0, 1.0, 1.0, 1.0)
 		}
 	}
 }
+
+// drawFilledOval draws a filled oval/ellipse at the given center with the specified radii
+func drawFilledOval(screen *ebiten.Image, centerX, centerY, radiusX, radiusY float32, col color.RGBA) {
+	// Draw an approximation using a path with many points
+	var path vector.Path
+	segments := 32
+	for i := 0; i <= segments; i++ {
+		angle := 2 * math.Pi * float64(i) / float64(segments)
+		x := centerX + radiusX*float32(math.Cos(angle))
+		y := centerY + radiusY*float32(math.Sin(angle))
+		if i == 0 {
+			path.MoveTo(x, y)
+		} else {
+			path.LineTo(x, y)
+		}
+	}
+	path.Close()
+
+	vertices, indices := path.AppendVerticesAndIndicesForFilling(nil, nil)
+	for i := range vertices {
+		vertices[i].ColorR = float32(col.R) / 255.0
+		vertices[i].ColorG = float32(col.G) / 255.0
+		vertices[i].ColorB = float32(col.B) / 255.0
+		vertices[i].ColorA = float32(col.A) / 255.0
+	}
+
+	// Initialize emptySubImage if needed
+	if emptySubImage == nil {
+		emptySubImage = ebiten.NewImage(3, 3)
+		emptySubImage.Fill(color.White)
+	}
+
+	screen.DrawTriangles(vertices, indices, emptySubImage, &ebiten.DrawTrianglesOptions{
+		FillRule: ebiten.NonZero,
+	})
+}
+
+var emptySubImage *ebiten.Image
 
 func (g *Game) drawTroop(screen *ebiten.Image, troopType string, x, y, size float32, playerColor color.RGBA) {
 	// No longer used - kept for compatibility
