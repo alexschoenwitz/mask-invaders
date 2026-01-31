@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -29,10 +30,10 @@ const (
 	maxCitySize      = 60
 	minTroopSize     = 8
 	maxTroopSize     = 10
-	pollInterval     = 20 * time.Millisecond // How often to poll the server
-	turnPlaybackRate = 50 * time.Millisecond // Fixed rate to consume states from buffer
-	minBufferStates  = 3                     // Minimum states to buffer before starting playback
-	stateBufferSize  = 20                    // Number of states to keep in buffer
+	pollInterval     = 2000 * time.Millisecond // How often to poll the server
+	turnPlaybackRate = 5000 * time.Millisecond // Fixed rate to consume states from buffer
+	minBufferStates  = 3                       // Minimum states to buffer before starting playback
+	stateBufferSize  = 20                      // Number of states to keep in buffer
 	defaultAPIURL    = "http://localhost:8080"
 )
 
@@ -89,6 +90,7 @@ type Game struct {
 	screenHeight     int              // Current screen height
 	movementStartMap map[string]int64 // Cache of movement ID -> start turn
 	tickCounter      int              // Frame counter for sprite animations
+	humanUI          *HumanUI         // Human interaction UI (optional)
 }
 
 // Player colors palette
@@ -374,6 +376,13 @@ func (g *Game) assignPlayerColors() {
 func (g *Game) Update() error {
 	g.tickCounter++ // Increment tick counter for sprite animations
 	now := time.Now()
+
+	// Update human UI if present
+	if g.humanUI != nil {
+		if err := g.humanUI.Update(); err != nil {
+			return err
+		}
+	}
 
 	// Poll server in live mode
 	if g.isLiveMode && now.Sub(g.lastPoll) >= pollInterval {
@@ -669,6 +678,11 @@ func (g *Game) Draw(screen *ebiten.Image) {
 
 	// Draw player statistics panel
 	g.drawPlayerStats(screen)
+
+	// Draw human UI if present
+	if g.humanUI != nil {
+		g.humanUI.Draw(screen)
+	}
 }
 
 func (g *Game) drawPlayerStats(screen *ebiten.Image) {
@@ -974,12 +988,86 @@ func min(a, b int) int {
 	return b
 }
 
+func newJSONRequest(ctx context.Context, method, url string, body []byte) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	return req, nil
+}
+
 func main() {
 	var game *Game
 	var err error
 
-	// Check if running in live mode or replay mode
-	if len(os.Args) < 2 {
+	// Check command line arguments for human mode
+	// Usage:
+	//   ui-engine-v2                              # watch mode
+	//   ui-engine-v2 <file>                       # replay mode
+	//   ui-engine-v2 --human <player-name>        # human interactive mode
+	var playerName string
+	var playerToken string
+
+	if len(os.Args) >= 3 && os.Args[1] == "--human" {
+		playerName = os.Args[2]
+
+		// Register the player
+		apiURL := defaultAPIURL
+		if len(os.Args) >= 4 {
+			apiURL = os.Args[3]
+		}
+
+		game, err = NewGameLive(apiURL)
+		if err != nil {
+			log.Fatalf("Failed to connect to server: %v", err)
+		}
+
+		// Register player
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		registerReq := &api.RegisterRequest{Name: playerName}
+		jsonData, err := protojson.Marshal(registerReq)
+		if err != nil {
+			log.Fatalf("Failed to marshal register request: %v", err)
+		}
+
+		req, err := newJSONRequest(ctx, "POST", apiURL+"/v1/register", jsonData)
+		if err != nil {
+			log.Fatalf("Failed to create register request: %v", err)
+		}
+
+		resp, err := game.httpClient.Do(req)
+		if err != nil {
+			log.Fatalf("Failed to register player: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != 200 {
+			body, _ := io.ReadAll(resp.Body)
+			log.Fatalf("Failed to register player: status %d: %s", resp.StatusCode, string(body))
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			log.Fatalf("Failed to read register response: %v", err)
+		}
+
+		registerResp := &api.RegisterResponse{}
+		if err := protojson.Unmarshal(body, registerResp); err != nil {
+			log.Fatalf("Failed to parse register response: %v", err)
+		}
+
+		playerToken = registerResp.Token
+		log.Printf("Registered as player '%s' with ID %s and token %s", playerName, registerResp.Id, playerToken)
+
+		// Create human UI
+		game.humanUI = NewHumanUI(game, playerName, registerResp.Id, playerToken)
+
+		log.Printf("Human interactive mode enabled for player '%s'", playerName)
+
+	} else if len(os.Args) < 2 {
 		log.Println("No file specified, connecting to live server...")
 		apiURL := defaultAPIURL
 		if len(os.Args) == 2 {
