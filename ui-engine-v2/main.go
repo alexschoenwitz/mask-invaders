@@ -65,27 +65,28 @@ type StateBuffer struct {
 
 // Game represents the main game state
 type Game struct {
-	apiURL          string
-	httpClient      *http.Client
-	states          []*api.State  // All states (for replay mode)
-	stateBuffer     []StateBuffer // Buffered states with timestamps (for live mode)
-	currentStateIdx int
-	displayStateIdx int // Index in buffer we're currently displaying
-	lastUpdate      time.Time
-	lastPoll        time.Time
-	turnProgress    float64 // 0.0 to 1.0 progress within current turn
-	currentTurn     float64 // Continuous current turn with sub-turn precision
-	cities          map[string]*CityDisplay
-	movements       []*MovementDisplay
-	playerColors    map[string]color.RGBA
-	colorPalette    []color.RGBA
-	playerList      []string
-	offscreen       *ebiten.Image
-	isLiveMode      bool          // true if using live API, false if replay mode
-	animationStart  time.Time     // When we started animating current turn
-	turnDuration    time.Duration // Duration for current turn animation
-	screenWidth     int           // Current screen width
-	screenHeight    int           // Current screen height
+	apiURL           string
+	httpClient       *http.Client
+	states           []*api.State  // All states (for replay mode)
+	stateBuffer      []StateBuffer // Buffered states with timestamps (for live mode)
+	currentStateIdx  int
+	displayStateIdx  int // Index in buffer we're currently displaying
+	lastUpdate       time.Time
+	lastPoll         time.Time
+	turnProgress     float64 // 0.0 to 1.0 progress within current turn
+	currentTurn      float64 // Continuous current turn with sub-turn precision
+	cities           map[string]*CityDisplay
+	movements        []*MovementDisplay
+	playerColors     map[string]color.RGBA
+	colorPalette     []color.RGBA
+	playerList       []string
+	offscreen        *ebiten.Image
+	isLiveMode       bool          // true if using live API, false if replay mode
+	animationStart   time.Time     // When we started animating current turn
+	turnDuration     time.Duration // Duration for current turn animation
+	screenWidth      int           // Current screen width
+	screenHeight     int           // Current screen height
+	movementStartMap map[string]int64 // Cache of movement ID -> start turn
 }
 
 // Player colors palette
@@ -120,15 +121,16 @@ func NewGame(filename string) (*Game, error) {
 	}
 
 	game := &Game{
-		states:       states,
-		lastUpdate:   time.Now(),
-		cities:       make(map[string]*CityDisplay),
-		playerColors: make(map[string]color.RGBA),
-		colorPalette: colors,
-		offscreen:    ebiten.NewImage(screenWidth, screenHeight),
-		isLiveMode:   false,
-		screenWidth:  screenWidth,
-		screenHeight: screenHeight,
+		states:           states,
+		lastUpdate:       time.Now(),
+		cities:           make(map[string]*CityDisplay),
+		playerColors:     make(map[string]color.RGBA),
+		colorPalette:     colors,
+		offscreen:        ebiten.NewImage(screenWidth, screenHeight),
+		isLiveMode:       false,
+		screenWidth:      screenWidth,
+		screenHeight:     screenHeight,
+		movementStartMap: make(map[string]int64),
 	}
 
 	game.initializeCities()
@@ -144,20 +146,21 @@ func NewGameLive(apiURL string) (*Game, error) {
 	}
 
 	game := &Game{
-		apiURL:          apiURL,
-		httpClient:      &http.Client{Timeout: 5 * time.Second},
-		states:          []*api.State{},
-		stateBuffer:     make([]StateBuffer, 0, stateBufferSize),
-		lastUpdate:      time.Now(),
-		lastPoll:        time.Now(),
-		cities:          make(map[string]*CityDisplay),
-		playerColors:    make(map[string]color.RGBA),
-		colorPalette:    colors,
-		offscreen:       ebiten.NewImage(screenWidth, screenHeight),
-		isLiveMode:      true,
-		displayStateIdx: -1,
-		screenWidth:     screenWidth,
-		screenHeight:    screenHeight,
+		apiURL:           apiURL,
+		httpClient:       &http.Client{Timeout: 5 * time.Second},
+		states:           []*api.State{},
+		stateBuffer:      make([]StateBuffer, 0, stateBufferSize),
+		lastUpdate:       time.Now(),
+		lastPoll:         time.Now(),
+		cities:           make(map[string]*CityDisplay),
+		playerColors:     make(map[string]color.RGBA),
+		colorPalette:     colors,
+		offscreen:        ebiten.NewImage(screenWidth, screenHeight),
+		isLiveMode:       true,
+		displayStateIdx:  -1,
+		screenWidth:      screenWidth,
+		screenHeight:     screenHeight,
+		movementStartMap: make(map[string]int64),
 	}
 
 	// Try to fetch initial state
@@ -217,6 +220,7 @@ func (g *Game) pollServerState() error {
 		g.displayStateIdx = -1
 		g.currentTurn = 0
 		g.animationStart = time.Time{}
+		g.movementStartMap = make(map[string]int64)
 	}
 
 	// Check if this is a new state
@@ -480,8 +484,16 @@ func (g *Game) updateMovements() {
 			toCity, toExists := g.cities[to.City]
 
 			if fromExists && toExists {
-				// Calculate movement start time (when it was created)
-				startTurn := g.findMovementStartTurn(movement)
+				// Create unique movement ID
+				movementID := getMovementID(movement)
+				
+				// Get or set start turn for this movement
+				startTurn, exists := g.movementStartMap[movementID]
+				if !exists {
+					// First time seeing this movement - record current turn as start
+					startTurn = currentState.Turn
+					g.movementStartMap[movementID] = startTurn
+				}
 
 				// Calculate smooth progress based on continuous time
 				totalDuration := float64(movement.ArrivingTurn - startTurn)
@@ -520,33 +532,16 @@ func (g *Game) updateMovements() {
 	}
 }
 
-// findMovementStartTurn determines when a movement first appeared in the game states
-func (g *Game) findMovementStartTurn(targetMovement *api.Movement) int64 {
-	// Search in appropriate state source
-	var statesToSearch []*api.State
-
-	if g.isLiveMode {
-		// In live mode, search through buffered states
-		for _, buf := range g.stateBuffer {
-			statesToSearch = append(statesToSearch, buf.state)
-		}
-	} else {
-		statesToSearch = g.states
+// getMovementID creates a unique identifier for a movement
+func getMovementID(movement *api.Movement) string {
+	var toStr string
+	switch to := movement.To.(type) {
+	case *api.Movement_City:
+		toStr = to.City
+	case *api.Movement_Mine:
+		toStr = "mine_" + to.Mine
 	}
-
-	// Find when this movement first appeared by looking through states
-	for _, state := range statesToSearch {
-		for _, movement := range state.Movements {
-			if movement.From == targetMovement.From &&
-				movement.To == targetMovement.To &&
-				movement.ArrivingTurn == targetMovement.ArrivingTurn &&
-				movement.Player == targetMovement.Player {
-				return state.Turn
-			}
-		}
-	}
-	// Fallback: assume it started one turn before arriving
-	return targetMovement.ArrivingTurn - 1
+	return fmt.Sprintf("%s->%s@%d:%s", movement.From, toStr, movement.ArrivingTurn, movement.Player)
 }
 
 func (g *Game) calculateCitySize(troops Troops) float64 {
