@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"image"
+	"image/color"
 	"log"
 
 	_ "image/png"
@@ -35,7 +36,7 @@ func init() {
 	scale := float64(screenWidth) / effectiveFrameSize
 
 	backgroundSprite = newSprite(ebiten.NewImageFromImage(backgroundImage), 4, 1, scale, scale, 2, 0.1) // 10% crop, square scaling
-	castleSprite = newSprite(ebiten.NewImageFromImage(castleImage), 4, 1, 2, 2, 2, 0.0)                 // No crop for castles
+	castleSprite = newSprite(ebiten.NewImageFromImage(castleImage), 4, 1, 0.2, 0.2, 2, 0.0)             // No crop for castles
 }
 
 func (g *Game) drawBackground(screen *ebiten.Image) {
@@ -59,20 +60,28 @@ func (g *Game) drawCity(screen *ebiten.Image, city *CityDisplay, scale float64) 
 	// Get player color for the shadow marker
 	playerColor := g.playerColors[city.Player]
 
-	// Draw oval shadow marker below castle
-	ovalCenterX := float32(x)
-	ovalCenterY := float32(y + 30*scale)
-	ovalRadiusX := float32(40 * scale)
-	ovalRadiusY := float32(15 * scale)
-	drawFilledOval(screen, ovalCenterX, ovalCenterY, ovalRadiusX, ovalRadiusY, playerColor)
-
 	// Draw castle sprite without tint
-	castleScale := 2.0 * scale // Castles are drawn at 2x base size
+	castleScale := 0.5 * scale
 	// Change castle animation every 5 turns
 	// Pass turn multiplied by speed so that sprite division shows all frames
 	gameTick := (int(g.currentTurn) / 5) * castleSprite.speed
 	img, op := castleSprite.selectFrameWithScale(gameTick, x-float64(castleSprite.frameWidth)*castleScale/2, y-float64(castleSprite.frameHeight)*castleScale/2, castleScale, castleScale, 1.0, 1.0, 1.0, 1.0)
 	screen.DrawImage(img, op)
+
+	// Draw oval shadow marker below castle (after castle for proper layering)
+	// Make color less strong (30% opacity) to match troop shadows
+	shadowColor := color.RGBA{
+		R: playerColor.R,
+		G: playerColor.G,
+		B: playerColor.B,
+		A: 76, // 30% of 255
+	}
+	// Scale shadow size with castle scale
+	ovalCenterX := float32(x)
+	ovalCenterY := float32(y + float64(castleSprite.frameHeight)*castleScale*0.6) // Position below castle
+	ovalRadiusX := float32(float64(castleSprite.frameWidth) * castleScale * 0.6)  // Scale with castle width
+	ovalRadiusY := float32(float64(castleSprite.frameWidth) * castleScale * 0.2)  // Smaller height for oval shape
+	drawFilledOval(screen, ovalCenterX, ovalCenterY, ovalRadiusX, ovalRadiusY, shadowColor)
 
 	// Draw city name above the castle
 	ebitenutil.DebugPrintAt(screen, city.Name, int(x-30*scale), int(y-40*scale))
