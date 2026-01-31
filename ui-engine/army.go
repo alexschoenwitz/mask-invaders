@@ -14,9 +14,10 @@ import (
 )
 
 var (
-	gopherImage *ebiten.Image
-	archerImage *ebiten.Image
-	knightImage *ebiten.Image
+	gopherImage   *ebiten.Image
+	archerImage   *ebiten.Image
+	knightImage   *ebiten.Image
+	infantryImage *ebiten.Image
 )
 
 // loads images before starting
@@ -40,6 +41,12 @@ func init() {
 	}
 	knightImage = ebiten.NewImageFromImage(img)
 
+	img, _, err = image.Decode(bytes.NewReader(resources.Infantry_png))
+	if err != nil {
+		log.Fatal(err)
+	}
+	infantryImage = ebiten.NewImageFromImage(img)
+
 	img, _, err = image.Decode(bytes.NewReader(resources.Castle_png))
 	if err != nil {
 		log.Fatal(err)
@@ -53,6 +60,7 @@ const (
 	Gopher troopType = iota
 	Archer
 	Knight
+	Infantry
 	CastleTmp
 )
 
@@ -93,8 +101,6 @@ func (s *Sprite) selectFrame(gameTick int, x, y float64) (*ebiten.Image, *ebiten
 	op := &ebiten.DrawImageOptions{}
 	op.GeoM.Scale(s.scaleX, s.scaleY)
 	fmt.Println("---------------------")
-
-	op.GeoM.Translate(-float64(s.frameWidth)/2, -float64(s.frameHeight)/2)
 	op.GeoM.Translate(x, y)
 
 	// gives the frame number
@@ -130,90 +136,120 @@ func minSpeed(speed int) int {
 	return speed
 }
 
-type Troop struct {
-	game   *Game
-	sprite *Sprite
+type Army struct {
+	game *Game
 
-	//arriveTurn int
+	knights      *Troop
+	knightsCount int
+
+	archers      *Troop
+	archersCount int
+
+	infantry      *Troop
+	infantryCount int
+
 	startX, startY   float64
 	targetX, targetY float64
 	x, y             float64
-	alive            bool
+
+	showTroopCounter bool
 }
 
-func NewTroop(g *Game, t troopType, sX, sY float64, tX, tY float64) *Troop {
+func NewArmy(g *Game,
+	sX, sY float64, tX, tY float64,
+	knight, archer, infantry int,
+	showTroopCounter bool,
+) *Army {
+	return &Army{
+		game:    g,
+		startX:  sX,
+		startY:  sY,
+		x:       sX,
+		y:       sY,
+		targetX: tX,
+		targetY: tY,
+
+		knightsCount:  knight,
+		knights:       NewTroop(g, Knight),
+		archersCount:  archer,
+		archers:       NewTroop(g, Archer),
+		infantryCount: infantry,
+		infantry:      NewTroop(g, Infantry),
+
+		showTroopCounter: showTroopCounter,
+	}
+}
+
+func (a *Army) Draw(screen *ebiten.Image) {
+	if a.archersCount > 0 {
+		a.archers.Draw(screen, a.x-5, a.y+5)
+	}
+	if a.infantryCount > 0 {
+		a.infantry.Draw(screen, a.x, a.y+20)
+	}
+	if a.knightsCount > 0 {
+		a.knights.Draw(screen, a.x+10, a.y+5)
+	}
+	if a.showTroopCounter {
+		// TODO add counter UI
+	}
+}
+
+func (a *Army) Update() error {
+	a.moveArmyToDestination()
+	return nil
+}
+
+func (a *Army) moveArmyToDestination() {
+	dx := a.targetX - a.x
+	dy := a.targetY - a.y
+
+	distance := math.Sqrt(dx*dx + dy*dy)
+
+	if distance > 1 {
+		a.x += (dx / distance) * 1
+		a.y += (dy / distance) * 1
+	}
+}
+
+type Troop struct {
+	game   *Game
+	sprite *Sprite
+}
+
+func NewTroop(g *Game, t troopType) *Troop {
 	var troop *Troop
 	switch t {
 	case Gopher:
 		troop = &Troop{
-			game:    g,
-			sprite:  newSprite(gopherImage, 1, 1, 2, 2, 1),
-			startX:  sX,
-			startY:  sY,
-			x:       sX,
-			y:       sY,
-			targetX: tX,
-			targetY: tY,
-			alive:   true,
+			game:   g,
+			sprite: newSprite(gopherImage, 1, 1, 2, 2, 1),
 		}
 	case Archer:
 		troop = &Troop{
-			game:    g,
-			sprite:  newSprite(archerImage, 1, 8, 1, 1, 1),
-			startX:  sX,
-			startY:  sY,
-			x:       sX,
-			y:       sY,
-			targetX: tX,
-			targetY: tY,
-			alive:   true,
+			game:   g,
+			sprite: newSprite(archerImage, 4, 2, 0.1, 0.1, 10),
 		}
 	case Knight:
 		troop = &Troop{
-			game:    g,
-			sprite:  newSprite(knightImage, 4, 8, 1, 1, 1),
-			startX:  sX,
-			startY:  sY,
-			x:       sX,
-			y:       sY,
-			targetX: tX,
-			targetY: tY,
-			alive:   true,
+			game:   g,
+			sprite: newSprite(knightImage, 4, 2, .15, .15, 10),
+		}
+	case Infantry:
+		troop = &Troop{
+			game:   g,
+			sprite: newSprite(infantryImage, 4, 2, 0.1, 0.1, 10),
 		}
 	case CastleTmp:
 		troop = &Troop{
-			game:    g,
-			sprite:  newSprite(castleImage, 4, 3, 0.3, 0.3, 2),
-			startX:  sX,
-			startY:  sY,
-			x:       sX,
-			y:       sY,
-			targetX: tX,
-			targetY: tY,
-			alive:   true,
+			game:   g,
+			sprite: newSprite(castleImage, 4, 3, 0.3, 0.3, 2),
 		}
 	}
 
 	return troop
 }
 
-func (t *Troop) Draw(screen *ebiten.Image) {
-	screen.DrawImage(t.sprite.selectFrame(t.game.tickCounter, t.x, t.y))
-}
-
-func (t *Troop) Update( /*add game*/ ) error {
-	t.moveTo(t.targetX, t.targetY)
-	return nil
-}
-
-func (t *Troop) moveTo(targetX, targetY float64) {
-	dx := targetX - t.x
-	dy := targetY - t.y
-
-	distance := math.Sqrt(dx*dx + dy*dy)
-
-	if distance > 1 {
-		t.x += (dx / distance) * 1
-		t.y += (dy / distance) * 1
-	}
+func (t *Troop) Draw(screen *ebiten.Image, x, y float64) {
+	screen.DrawImage(t.sprite.selectFrame(t.game.tickCounter, x, y))
 }

@@ -19,4 +19,7 @@ var (
 
 	//go:embed knight.png
 	Knight_png []byte
+
+	//go:embed infantry.png
+	Infantry_png []byte
 )
