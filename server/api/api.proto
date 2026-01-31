@@ -99,6 +99,7 @@ message Action {
   oneof action {
     Attack attack = 3;
     None none = 4;
+    CreateTroop create_troop = 5;
   }
 }
 
@@ -109,6 +110,11 @@ message Attack {
 }
 
 message None {}
+
+message CreateTroop {
+  string in = 1;
+  string type = 2;
+}
 
 message RegisterRequest {
   string name = 1;

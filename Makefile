@@ -1,15 +1,19 @@
-generate:
-	@buf generate 
+install-plugins:
+	@mkdir -p .bin
+	@GOBIN=$(PWD)/.bin go install github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-grpc-gateway@v2.27.7
+
+generate: install-plugins
+	@PATH=$(PWD)/.bin:$$PATH buf generate 
 
 fix:
 	@buf format -w
 
-run-server:
+run-server: generate
 	@go run ./server/...
 
-run-ui:
+run-ui: generate
 	@go run ./ui-engine/...
 
-run-game:
+run-game: generate
 	@go run ./client/dumb-bot/main.go &
 	@go run ./client/very-clever-bot/main.go &
