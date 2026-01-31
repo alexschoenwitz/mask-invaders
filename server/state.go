@@ -30,17 +30,17 @@ var (
 	troopImpact = map[string]map[string]float64{
 		troopA: {
 			troopA: 1.0,
-			troopB: 0.5,
-			troopC: 2.0,
+			troopB: 0.8,
+			troopC: 2.1,
 		},
 		troopB: {
-			troopA: 2.0,
+			troopA: 1.3,
 			troopB: 1.0,
-			troopC: 0.5,
+			troopC: 0.9,
 		},
 		troopC: {
-			troopA: 0.5,
-			troopB: 2.0,
+			troopA: 0.6,
+			troopB: 1.1,
 			troopC: 1.0,
 		},
 	}
@@ -166,7 +166,7 @@ func (s *server) checkWinCondition() bool {
 	}
 	fmt.Printf("Player %s has won the game in %d turns!\n", victor, s.turnCount)
 	// write down history in json
-	b, _ := json.Marshal(s.stateHistory)
+	b, _ := json.Marshal(append(s.stateHistory, s.currentState))
 	_ = os.WriteFile("gamehistory.json", b, 0o600)
 	return true
 }
@@ -175,8 +175,10 @@ func processTurn(currentState *api.State, actions map[string]*api.Action, turnCo
 	state := proto.CloneOf(currentState)
 
 	// first process movements
+	remainingMovements := make([]*api.Movement, 0, len(state.Movements))
 	for _, movement := range state.Movements {
-		if movement.ArrivingTurn < int64(turnCount) {
+		if movement.ArrivingTurn != int64(turnCount) {
+			remainingMovements = append(remainingMovements, movement)
 			continue
 		}
 
@@ -196,6 +198,7 @@ func processTurn(currentState *api.State, actions map[string]*api.Action, turnCo
 			city.Troops = survivingTroops
 		}
 	}
+	state.Movements = remainingMovements
 
 	// then process actions
 	for playerID, action := range actions {
