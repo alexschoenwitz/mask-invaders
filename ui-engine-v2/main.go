@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	screenWidth      = 1200
+	screenWidth      = 800
 	screenHeight     = 800
 	minCitySize      = 50
 	maxCitySize      = 60
@@ -84,6 +84,8 @@ type Game struct {
 	isLiveMode      bool          // true if using live API, false if replay mode
 	animationStart  time.Time     // When we started animating current turn
 	turnDuration    time.Duration // Duration for current turn animation
+	screenWidth     int           // Current screen width
+	screenHeight    int           // Current screen height
 }
 
 // Player colors palette
@@ -125,6 +127,8 @@ func NewGame(filename string) (*Game, error) {
 		colorPalette: colors,
 		offscreen:    ebiten.NewImage(screenWidth, screenHeight),
 		isLiveMode:   false,
+		screenWidth:  screenWidth,
+		screenHeight: screenHeight,
 	}
 
 	game.initializeCities()
@@ -152,6 +156,8 @@ func NewGameLive(apiURL string) (*Game, error) {
 		offscreen:       ebiten.NewImage(screenWidth, screenHeight),
 		isLiveMode:      true,
 		displayStateIdx: -1,
+		screenWidth:     screenWidth,
+		screenHeight:    screenHeight,
 	}
 
 	// Try to fetch initial state
@@ -263,8 +269,8 @@ func (g *Game) initializeCities() {
 	}
 
 	// Arrange cities in a circle or grid
-	centerX, centerY := float64(screenWidth)/2, float64(screenHeight)/2
-	radius := float64(min(screenWidth, screenHeight)) * 0.3
+	centerX, centerY := float64(g.screenWidth)/2, float64(g.screenHeight)/2
+	radius := float64(min(g.screenWidth, g.screenHeight)) * 0.3
 
 	i := 0
 	for name := range cities {
@@ -674,7 +680,15 @@ func (g *Game) drawOrientedTroop(screen *ebiten.Image, troopType string, x, y, s
 }
 
 func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
-	return screenWidth, screenHeight
+	// Make it square based on the smaller dimension
+	size := outsideWidth
+	if outsideHeight < outsideWidth {
+		size = outsideHeight
+	}
+	// Update the game's screen dimensions
+	g.screenWidth = size
+	g.screenHeight = size
+	return size, size
 }
 
 func min(a, b int) int {
@@ -710,6 +724,7 @@ func main() {
 
 	ebiten.SetWindowSize(screenWidth, screenHeight)
 	ebiten.SetWindowTitle("Mask Invaders Visualization")
+	ebiten.SetWindowResizingMode(ebiten.WindowResizingModeEnabled)
 	ebiten.SetTPS(60)
 	ebiten.SetFPSMode(ebiten.FPSModeVsyncOn)
 

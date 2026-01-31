@@ -29,16 +29,23 @@ func init() {
 		log.Fatalf("load castle image: %w", err)
 	}
 
-	frameWidth, frameHeight := backgroundImage.Bounds().Dx(), backgroundImage.Bounds().Dy()
-	scaleX := float64(screenWidth) / float64(frameWidth/4)
-	scaleY := float64(screenHeight) / float64(frameHeight)
+	frameWidth := backgroundImage.Bounds().Dx()
+	// Since we're cropping 10% from each edge, the effective frame size is 80% of original
+	effectiveFrameSize := float64(frameWidth/4) * 0.8 // 4 columns, 80% after 10% crop on each side
+	scale := float64(screenWidth) / effectiveFrameSize
 
-	backgroundSprite = newSprite(ebiten.NewImageFromImage(backgroundImage), 4, 1, scaleX, scaleY, 2)
-	castleSprite = newSprite(ebiten.NewImageFromImage(castleImage), 4, 1, 2, 2, 2)
+	backgroundSprite = newSprite(ebiten.NewImageFromImage(backgroundImage), 4, 1, scale, scale, 2, 0.1) // 10% crop, square scaling
+	castleSprite = newSprite(ebiten.NewImageFromImage(castleImage), 4, 1, 2, 2, 2, 0.0)                 // No crop for castles
 }
 
 func (g *Game) drawBackground(screen *ebiten.Image) {
-	img, op := backgroundSprite.selectFrame(int(g.currentTurn), 0, 0, 1, 1, 1, 1)
+	// Calculate dynamic scale based on current screen size
+	frameWidth := backgroundSprite.image.Bounds().Dx() / backgroundSprite.spriteColumns
+	effectiveFrameSize := float64(frameWidth) * 0.8 // 80% after 10% crop on each side
+	scale := float64(g.screenWidth) / effectiveFrameSize
+	
+	// Create custom draw options with dynamic scale
+	img, op := backgroundSprite.selectFrameWithScale(int(g.currentTurn), 0, 0, scale, scale, 1, 1, 1, 1)
 	screen.DrawImage(img, op)
 }
 
