@@ -144,7 +144,7 @@ func playGame(client *http.Client, token, playerID string) {
 	log.Println("Starting game loop with clever strategy...")
 
 	for {
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond)
 
 		state, err := getGameState(client, token)
 		if err != nil {

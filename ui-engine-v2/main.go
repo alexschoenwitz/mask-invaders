@@ -29,10 +29,10 @@ const (
 	maxCitySize      = 60
 	minTroopSize     = 8
 	maxTroopSize     = 10
-	pollInterval     = 200 * time.Millisecond // How often to poll the server
-	turnPlaybackRate = 500 * time.Millisecond // Fixed rate to consume states from buffer
-	minBufferStates  = 3                      // Minimum states to buffer before starting playback
-	stateBufferSize  = 20                     // Number of states to keep in buffer
+	pollInterval     = 20 * time.Millisecond // How often to poll the server
+	turnPlaybackRate = 50 * time.Millisecond // Fixed rate to consume states from buffer
+	minBufferStates  = 3                     // Minimum states to buffer before starting playback
+	stateBufferSize  = 20                    // Number of states to keep in buffer
 	defaultAPIURL    = "http://localhost:8080"
 )
 
@@ -165,12 +165,60 @@ func NewGameLive(apiURL string) (*Game, error) {
 		movementStartMap: make(map[string]int64),
 	}
 
+	// Fetch historical data first for the graph
+	if err := game.fetchStateHistory(); err != nil {
+		log.Printf("Warning: Failed to fetch state history: %v", err)
+	}
+
 	// Try to fetch initial state
 	if err := game.pollServerState(); err != nil {
 		log.Printf("Warning: Failed to fetch initial state: %v", err)
 	}
 
 	return game, nil
+}
+
+func (g *Game) fetchStateHistory() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, "GET", g.apiURL+"/v1/state:history", nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %v", err)
+	}
+
+	resp, err := g.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to fetch history: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response: %v", err)
+	}
+
+	historyResponse := api.GetStateHistoryResponse{}
+	if err := protojson.Unmarshal(body, &historyResponse); err != nil {
+		return fmt.Errorf("failed to parse JSON: %v", err)
+	}
+
+	// Store all historical states
+	g.states = historyResponse.States
+
+	// Initialize cities and colors from history if we have data
+	if len(g.states) > 0 {
+		g.initializeCities()
+		g.assignPlayerColors()
+		log.Printf("Fetched %d historical states for graphing", len(g.states))
+	}
+
+	return nil
 }
 
 func (g *Game) pollServerState() error {
@@ -244,11 +292,9 @@ func (g *Game) pollServerState() error {
 			}
 		}
 
-		// Also add to states list for compatibility
+		// Also add to states list for graph history
+		// Don't limit states list - keep full history for graphing
 		g.states = append(g.states, stateResponse.State)
-		if len(g.states) > stateBufferSize {
-			g.states = g.states[1:]
-		}
 
 		// Initialize cities on first state
 		if len(g.cities) == 0 {
@@ -620,6 +666,172 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	} else {
 		ebitenutil.DebugPrint(screen, fmt.Sprintf("Waiting for game... [%s]", mode))
 	}
+
+	// Draw player statistics panel
+	g.drawPlayerStats(screen)
+}
+
+func (g *Game) drawPlayerStats(screen *ebiten.Image) {
+	// Draw statistics graph showing troops over time (Age of Empires style)
+	if len(g.states) < 2 {
+		return // Need at least 2 states to draw a graph
+	}
+
+	// Calculate player statistics from history
+	type PlayerHistory struct {
+		TotalUnits []int64
+		Castles    []int
+		Turns      []int64
+	}
+
+	history := make(map[string]*PlayerHistory)
+
+	// Initialize history for all players
+	for _, player := range g.playerList {
+		history[player] = &PlayerHistory{
+			TotalUnits: make([]int64, 0),
+			Castles:    make([]int, 0),
+			Turns:      make([]int64, 0),
+		}
+	}
+
+	// Collect historical data from all states
+	for _, state := range g.states {
+		playerTroops := make(map[string]int64)
+		playerCastles := make(map[string]int)
+
+		// Count troops in cities
+		for _, city := range state.Cities {
+			total := city.Troops["A"] + city.Troops["B"] + city.Troops["C"]
+			playerTroops[city.Player] += total
+			playerCastles[city.Player]++
+		}
+
+		// Count troops in movements
+		for _, movement := range state.Movements {
+			total := movement.Troops["A"] + movement.Troops["B"] + movement.Troops["C"]
+			playerTroops[movement.Player] += total
+		}
+
+		// Record data for each player
+		for player := range history {
+			history[player].TotalUnits = append(history[player].TotalUnits, playerTroops[player])
+			history[player].Castles = append(history[player].Castles, playerCastles[player])
+			history[player].Turns = append(history[player].Turns, state.Turn)
+		}
+	}
+
+	// Draw graph panel at the bottom
+	graphHeight := 200.0
+	graphWidth := float64(g.screenWidth) - 20
+	graphX := 10.0
+	graphY := float64(g.screenHeight) - graphHeight - 10
+
+	// Draw semi-transparent background
+	panelImg := ebiten.NewImage(int(graphWidth), int(graphHeight))
+	panelImg.Fill(color.RGBA{0, 0, 0, 200})
+
+	op := &ebiten.DrawImageOptions{}
+	op.GeoM.Translate(graphX, graphY)
+	screen.DrawImage(panelImg, op)
+
+	// Draw title
+	ebitenutil.DebugPrintAt(screen, "=== TROOPS OVER TIME ===", int(graphX+10), int(graphY+5))
+
+	// Calculate graph area
+	plotX := graphX + 50
+	plotY := graphY + 30
+	plotWidth := graphWidth - 70
+	plotHeight := graphHeight - 50
+
+	// Find max values for scaling
+	maxUnits := int64(1)
+	maxTurn := int64(1)
+	for _, ph := range history {
+		for _, units := range ph.TotalUnits {
+			if units > maxUnits {
+				maxUnits = units
+			}
+		}
+		if len(ph.Turns) > 0 && ph.Turns[len(ph.Turns)-1] > maxTurn {
+			maxTurn = ph.Turns[len(ph.Turns)-1]
+		}
+	}
+
+	// Draw grid lines
+	gridColor := color.RGBA{60, 60, 70, 255}
+	for i := 0; i <= 5; i++ {
+		y := plotY + float64(i)*plotHeight/5
+		vector.StrokeLine(screen, float32(plotX), float32(y), float32(plotX+plotWidth), float32(y), 1, gridColor, false)
+
+		// Y-axis labels
+		labelValue := maxUnits * int64(5-i) / 5
+		ebitenutil.DebugPrintAt(screen, fmt.Sprintf("%d", labelValue), int(graphX+5), int(y-6))
+	}
+
+	// Draw axes
+	axisColor := color.RGBA{150, 150, 150, 255}
+	vector.StrokeLine(screen, float32(plotX), float32(plotY), float32(plotX), float32(plotY+plotHeight), 2, axisColor, false)
+	vector.StrokeLine(screen, float32(plotX), float32(plotY+plotHeight), float32(plotX+plotWidth), float32(plotY+plotHeight), 2, axisColor, false)
+
+	// Draw lines for each player
+	for _, player := range g.playerList {
+		ph := history[player]
+		if len(ph.TotalUnits) < 2 {
+			continue
+		}
+
+		playerColor := g.playerColors[player]
+
+		// Draw line connecting points
+		for i := 0; i < len(ph.TotalUnits)-1; i++ {
+			x1 := plotX + (float64(ph.Turns[i])/float64(maxTurn))*plotWidth
+			y1 := plotY + plotHeight - (float64(ph.TotalUnits[i])/float64(maxUnits))*plotHeight
+			x2 := plotX + (float64(ph.Turns[i+1])/float64(maxTurn))*plotWidth
+			y2 := plotY + plotHeight - (float64(ph.TotalUnits[i+1])/float64(maxUnits))*plotHeight
+
+			vector.StrokeLine(screen, float32(x1), float32(y1), float32(x2), float32(y2), 2, playerColor, false)
+		}
+
+		// Draw current value indicator
+		if len(ph.TotalUnits) > 0 {
+			lastIdx := len(ph.TotalUnits) - 1
+			x := plotX + (float64(ph.Turns[lastIdx])/float64(maxTurn))*plotWidth
+			y := plotY + plotHeight - (float64(ph.TotalUnits[lastIdx])/float64(maxUnits))*plotHeight
+
+			// Draw circle at endpoint
+			vector.DrawFilledCircle(screen, float32(x), float32(y), 4, playerColor, false)
+		}
+	}
+
+	// Draw legend
+	legendX := graphX + graphWidth - 150
+	legendY := graphY + 25
+	for i, player := range g.playerList {
+		ph := history[player]
+		playerColor := g.playerColors[player]
+
+		// Draw color box
+		colorBox := ebiten.NewImage(10, 10)
+		colorBox.Fill(playerColor)
+		colorOp := &ebiten.DrawImageOptions{}
+		colorOp.GeoM.Translate(legendX, legendY+float64(i*15))
+		screen.DrawImage(colorBox, colorOp)
+
+		// Draw player name and current stats
+		var currentUnits int64
+		var currentCastles int
+		if len(ph.TotalUnits) > 0 {
+			currentUnits = ph.TotalUnits[len(ph.TotalUnits)-1]
+			currentCastles = ph.Castles[len(ph.Castles)-1]
+		}
+		ebitenutil.DebugPrintAt(screen, fmt.Sprintf("%s: %d (%d)", player, currentUnits, currentCastles),
+			int(legendX+15), int(legendY+float64(i*15)))
+	}
+
+	// Draw X-axis label
+	ebitenutil.DebugPrintAt(screen, "Turn", int(plotX+plotWidth/2-10), int(plotY+plotHeight+15))
+	ebitenutil.DebugPrintAt(screen, "Units", int(graphX+5), int(plotY-15))
 }
 
 func (g *Game) drawTroopsAtCity(screen *ebiten.Image, city *CityDisplay, scale float64) {
@@ -643,10 +855,10 @@ func (g *Game) drawTroopsAtCity(screen *ebiten.Image, city *CityDisplay, scale f
 				A: 76, // 30% of 255
 			}
 			// Center better (add sprite width offset), smaller size, more down
-			ovalCenterX := float32(troopX + 8*scale) // Center it better
+			ovalCenterX := float32(troopX + 8*scale)  // Center it better
 			ovalCenterY := float32(troopY + 20*scale) // Move it more down
-			ovalRadiusX := float32(12 * scale) // Smaller width
-			ovalRadiusY := float32(5 * scale)  // Smaller height
+			ovalRadiusX := float32(12 * scale)        // Smaller width
+			ovalRadiusY := float32(5 * scale)         // Smaller height
 			drawFilledOval(screen, ovalCenterX, ovalCenterY, ovalRadiusX, ovalRadiusY, shadowColor)
 
 			// Draw troop sprite without tint
@@ -684,10 +896,10 @@ func (g *Game) drawMovement(screen *ebiten.Image, movement *MovementDisplay, sca
 				A: 76, // 30% of 255
 			}
 			// Center better (add sprite width offset), smaller size, more down
-			ovalCenterX := float32(offsetX + 8*scale) // Center it better
+			ovalCenterX := float32(offsetX + 8*scale)  // Center it better
 			ovalCenterY := float32(offsetY + 20*scale) // Move it more down
-			ovalRadiusX := float32(12 * scale) // Smaller width
-			ovalRadiusY := float32(5 * scale)  // Smaller height
+			ovalRadiusX := float32(12 * scale)         // Smaller width
+			ovalRadiusY := float32(5 * scale)          // Smaller height
 			drawFilledOval(screen, ovalCenterX, ovalCenterY, ovalRadiusX, ovalRadiusY, shadowColor)
 
 			// Draw troop sprite without tint

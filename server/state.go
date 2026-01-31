@@ -114,7 +114,7 @@ func calculateBattle(attackingTroops, defendingTroops map[string]int64) (attacke
 }
 
 func (s *server) run(ctx context.Context) {
-	ticker := time.NewTicker(500 * time.Millisecond)
+	ticker := time.NewTicker(50 * time.Millisecond)
 	for {
 		select {
 		case <-ctx.Done():
