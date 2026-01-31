@@ -238,6 +238,15 @@ func processTurn(currentState *api.State, actions map[string]map[string]*api.Act
 			}
 		case *api.Movement_Mine:
 			// currently nothing happens when arriving at a mine
+			mine, ok := state.Mines[to.Mine]
+			if !ok {
+				fmt.Printf("this should not happen, troops will just disappear\n")
+				continue
+			}
+			// Claim the mine for the player if not already claimed
+			if !mine.Claimed {
+				mine.Claimed = true
+			}
 		default:
 			fmt.Printf("unknown movement destination type, troops will just disappear\n")
 		}
@@ -273,16 +282,33 @@ func processTurn(currentState *api.State, actions map[string]map[string]*api.Act
 				continue
 			}
 
-			newMovement := &api.Movement{
-				Player: playerID,
-				From:   attack.From,
-				To: &api.Movement_City{
-					City: attack.GetTo().(*api.Attack_City).City,
-				},
-				Troops:       attack.Troops,
-				ArrivingTurn: turnCount + distance.Distance,
+			switch to := attack.GetTo().(type) {
+			case *api.Attack_City:
+				newMovement := &api.Movement{
+					Player: playerID,
+					From:   attack.From,
+					To: &api.Movement_City{
+						City: to.City,
+					},
+					Troops:       attack.Troops,
+					ArrivingTurn: turnCount + distance.Distance,
+				}
+				state.Movements = append(state.Movements, newMovement)
+			case *api.Attack_Mine:
+				newMovement := &api.Movement{
+					Player: playerID,
+					From:   attack.From,
+					To: &api.Movement_Mine{
+						Mine: to.Mine,
+					},
+					Troops:       attack.Troops,
+					ArrivingTurn: turnCount + distance.Distance,
+				}
+				state.Movements = append(state.Movements, newMovement)
+			default:
+				fmt.Printf("unknown attack destination type, skipping action\n")
+				continue
 			}
-			state.Movements = append(state.Movements, newMovement)
 
 			// remove troops from the origin city
 			for troopType, amount := range attack.Troops {
