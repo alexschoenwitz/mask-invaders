@@ -76,7 +76,7 @@ func newSprite(
 	scaleX, scaleY float64,
 	speed int,
 ) *Sprite {
-	iW, iH := image.Bounds().Dx(), archerImage.Bounds().Dy()
+	iW, iH := image.Bounds().Dx(), image.Bounds().Dy()
 	return &Sprite{
 		image:         image,
 		spriteRows:    spriteRows,
@@ -105,7 +105,7 @@ func (s *Sprite) selectFrame(gameTick int, x, y float64) (*ebiten.Image, *ebiten
 	// we then find the row where the frame belongs to
 	// we will use this to know how to crop the right frame from the sprite
 	frameRow := frameNumber / s.spriteColumns
-	frameColumn := frameNumber % s.spriteRows
+	frameColumn := frameNumber % s.spriteColumns
 
 	fmt.Println("frame R: ", frameRow)
 	fmt.Println("frame C: ", frameColumn)
