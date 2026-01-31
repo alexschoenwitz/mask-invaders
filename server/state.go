@@ -272,18 +272,17 @@ func processTurn(currentState *api.State, actions map[string]map[string]*api.Act
 				continue
 			}
 
-			// create a new movement
-			distance, ok := state.Distances[attack.GetCity()+attack.From]
-			if !ok {
-				distance = state.Distances[attack.From+attack.GetCity()]
-			}
-			if distance == nil {
-				fmt.Printf("no distance found between %s and %s, skipping action\n", attack.From, attack.GetCity())
-				continue
-			}
-
 			switch to := attack.GetTo().(type) {
 			case *api.Attack_City:
+				// create a new movement
+				distance, ok := state.Distances[to.City+attack.From]
+				if !ok {
+					distance = state.Distances[attack.From+to.City]
+				}
+				if distance == nil {
+					fmt.Printf("no distance found between %s and %s, skipping action\n", attack.From, to.City)
+					continue
+				}
 				newMovement := &api.Movement{
 					Player: playerID,
 					From:   attack.From,
@@ -301,8 +300,8 @@ func processTurn(currentState *api.State, actions map[string]map[string]*api.Act
 					To: &api.Movement_Mine{
 						Mine: to.Mine,
 					},
-					Troops:       attack.Troops,
-					ArrivingTurn: turnCount + distance.Distance,
+					Troops: attack.Troops,
+					// distance to mine not implemented yet, assume 0 for now
 				}
 				state.Movements = append(state.Movements, newMovement)
 			default:
