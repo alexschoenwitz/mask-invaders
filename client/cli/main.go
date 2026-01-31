@@ -20,6 +20,7 @@ Usage:
 	register <username>
 	getstate
 	attack <from_city_id> <to_city_id> <A:x,B:y,C:z>
+	claimMine <from_city_id> <mine_id>
 	noop
 `
 )
@@ -48,7 +49,7 @@ func main() {
 		input := scanner.Text()
 
 		// process input
-		// e.g. "register", "getstate", "attack", "train", etc.
+		// e.g. "register", "getstate", "attack", "train", "claimMine" etc.
 
 		parts := strings.Split(input, " ")
 		if len(parts) < 1 || strings.TrimSpace(parts[0]) == "" {
@@ -122,6 +123,29 @@ func main() {
 				panic(err)
 			}
 			fmt.Println("Attack action sent.")
+		case "claimMine":
+			if len(parts) < 3 {
+				fmt.Println("Expected input of the form: claimMine <from_city_id> <mine_id>")
+				continue
+			}
+			fromCityID := parts[1]
+			mineID := parts[2]
+			req := &api.PostActionRequest{
+				Action: &api.Action{
+					Player: playerID,
+					Action: &api.Action_ClaimMine{
+						ClaimMine: &api.ClaimMine{
+							From: fromCityID,
+							Mine: mineID,
+						},
+					},
+				},
+			}
+			err := c.PostAction(req)
+			if err != nil {
+				panic(err)
+			}
+			fmt.Println("ClaimMine action sent.")
 		case "noop":
 			req := &api.PostActionRequest{
 				Action: &api.Action{
