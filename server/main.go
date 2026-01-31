@@ -21,7 +21,6 @@ import (
 type server struct {
 	api.UnimplementedServerServer
 
-	actionsLock sync.Mutex
 	actionQueue chan *api.Action
 
 	currentState *api.State
@@ -32,10 +31,11 @@ type server struct {
 	stateLock    sync.RWMutex
 	stateHistory []*api.State
 
+	// only accessed by run() goroutine, no lock needed
 	submittedActions map[string]*api.Action
+	turnCount        int64
 
-	turnCount   int64
-	gameStarted atomic.Bool // locked once started
+	gameStarted atomic.Bool
 
 	shutdown func()
 }

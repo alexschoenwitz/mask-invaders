@@ -133,10 +133,8 @@ func (s *server) run(ctx context.Context) {
 			}
 		}
 		// every player submitted an action, or the timer expired, process the turn!
-		s.actionsLock.Lock()
 		actions := s.submittedActions
 		s.submittedActions = make(map[string]*api.Action)
-		s.actionsLock.Unlock()
 
 		s.stateLock.Lock()
 		s.turnCount++
@@ -292,15 +290,22 @@ func (s *server) StartGame(ctx context.Context, req *api.StartGameRequest) (*api
 }
 
 func (s *server) ResetGame(ctx context.Context, req *api.ResetGameRequest) (*api.ResetGameResponse, error) {
-	s.playersLock.Lock()
-	defer s.playersLock.Unlock()
-
+	// Must stop the game loop first by setting gameStarted to false
 	s.gameStarted.Store(false)
+
+	s.playersLock.Lock()
+	s.players = make(map[string]*player)
+	s.playersLock.Unlock()
+
+	s.stateLock.Lock()
 	s.currentState = nil
 	s.stateHistory = []*api.State{}
 	s.turnCount = 0
+	s.stateLock.Unlock()
+
+	// Note: submittedActions is only accessed by run() goroutine
+	// which is now paused due to gameStarted=false, so this is safe
 	s.submittedActions = make(map[string]*api.Action)
-	s.players = make(map[string]*player)
 
 	return &api.ResetGameResponse{}, nil
 }
