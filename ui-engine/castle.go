@@ -56,6 +56,7 @@ func NewCastle(g *Game, x, y float64) *Castle {
 func (t *Castle) Draw(screen *ebiten.Image) {
 	fmt.Println(t.width, t.height)
 	op := &ebiten.DrawImageOptions{}
+	op.GeoM.Scale(0.1, 0.1)
 
 	op.GeoM.Translate(-float64(t.width)/2, -float64(t.height)/2)
 	op.GeoM.Translate(t.pos_x, t.pos_y)

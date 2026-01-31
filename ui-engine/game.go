@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	_ "image/png"
 
 	"github.com/hajimehoshi/ebiten/v2"
@@ -23,7 +22,6 @@ type gameObjects interface {
 
 func (g *Game) Update() error {
 	g.tickCounter++
-	fmt.Println("Ticker: ", g.tickCounter)
 	for _, o := range g.objects {
 		err := o.Update()
 		if err != nil {

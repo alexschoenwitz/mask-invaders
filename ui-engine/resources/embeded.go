@@ -19,7 +19,4 @@ var (
 
 	//go:embed knight.png
 	Knight_png []byte
-
-	//go:embed image.png
-	Temp_png []byte
 )

@@ -22,7 +22,7 @@ var (
 // loads images before starting
 // always re-use image, don't load new ones
 func init() {
-	img, _, err := image.Decode(bytes.NewReader(resources.Knight_png))
+	img, _, err := image.Decode(bytes.NewReader(resources.Gopher_png))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -34,11 +34,17 @@ func init() {
 	}
 	archerImage = ebiten.NewImageFromImage(img)
 
-	img, _, err = image.Decode(bytes.NewReader(resources.Temp_png))
+	img, _, err = image.Decode(bytes.NewReader(resources.Knight_png))
 	if err != nil {
 		log.Fatal(err)
 	}
 	knightImage = ebiten.NewImageFromImage(img)
+
+	img, _, err = image.Decode(bytes.NewReader(resources.Castle_png))
+	if err != nil {
+		log.Fatal(err)
+	}
+	castleImage = ebiten.NewImageFromImage(img)
 }
 
 type troopType int
@@ -47,6 +53,7 @@ const (
 	Gopher troopType = iota
 	Archer
 	Knight
+	CastleTmp
 )
 
 type Sprite struct {
@@ -65,26 +72,27 @@ type Sprite struct {
 
 func newSprite(
 	image *ebiten.Image,
-	spriteRows, spriteColumns int,
+	spriteColumns, spriteRows int,
 	scaleX, scaleY float64,
 	speed int,
 ) *Sprite {
 	iW, iH := image.Bounds().Dx(), archerImage.Bounds().Dy()
 	return &Sprite{
-		image:         gopherImage,
+		image:         image,
 		spriteRows:    spriteRows,
 		spriteColumns: spriteColumns,
-		frameHeight:   iH / spriteRows,
 		frameWidth:    iW / spriteColumns,
+		frameHeight:   iH / spriteRows,
 		scaleX:        scaleX,
 		scaleY:        scaleY,
 		speed:         speed,
 	}
 }
 
-func (s *Sprite) selectFrame(gameTick int, x, y float64) *ebiten.Image {
+func (s *Sprite) selectFrame(gameTick int, x, y float64) (*ebiten.Image, *ebiten.DrawImageOptions) {
 	op := &ebiten.DrawImageOptions{}
 	op.GeoM.Scale(s.scaleX, s.scaleY)
+	fmt.Println("---------------------")
 
 	op.GeoM.Translate(-float64(s.frameWidth)/2, -float64(s.frameHeight)/2)
 	op.GeoM.Translate(x, y)
@@ -93,15 +101,24 @@ func (s *Sprite) selectFrame(gameTick int, x, y float64) *ebiten.Image {
 	// depending on the number of frames per row and number of columns
 	// example: a 5 by 3 sprite will have 15 frames in total, 5 frames per row
 	frameNumber := (gameTick / minSpeed(s.speed)) % (s.spriteRows * s.spriteColumns)
+
 	// we then find the row where the frame belongs to
 	// we will use this to know how to crop the right frame from the sprite
-	frameRow := frameNumber / s.spriteRows
+	frameRow := frameNumber / s.spriteColumns
 	frameColumn := frameNumber % s.spriteRows
+
+	fmt.Println("frame R: ", frameRow)
+	fmt.Println("frame C: ", frameColumn)
 
 	sx, sy := frameColumn*s.frameWidth, frameRow*s.frameHeight
 
+	fmt.Println("StartX: ", sx, sx+s.frameWidth)
+	fmt.Println("StartY: ", sy, s.frameHeight)
+
+	fmt.Println("---------------------")
+
 	// Draw the specific frame "slice"
-	return s.image.SubImage(image.Rect(sx, sy, sx+s.frameWidth, sy+s.frameHeight)).(*ebiten.Image)
+	return s.image.SubImage(image.Rect(sx, sy, sx+s.frameWidth, sy+s.frameHeight)).(*ebiten.Image), op
 
 }
 
@@ -120,6 +137,7 @@ type Troop struct {
 	//arriveTurn int
 	startX, startY   float64
 	targetX, targetY float64
+	x, y             float64
 	alive            bool
 }
 
@@ -132,6 +150,8 @@ func NewTroop(g *Game, t troopType, sX, sY float64, tX, tY float64) *Troop {
 			sprite:  newSprite(gopherImage, 1, 1, 2, 2, 1),
 			startX:  sX,
 			startY:  sY,
+			x:       sX,
+			y:       sY,
 			targetX: tX,
 			targetY: tY,
 			alive:   true,
@@ -142,6 +162,8 @@ func NewTroop(g *Game, t troopType, sX, sY float64, tX, tY float64) *Troop {
 			sprite:  newSprite(archerImage, 1, 8, 1, 1, 1),
 			startX:  sX,
 			startY:  sY,
+			x:       sX,
+			y:       sY,
 			targetX: tX,
 			targetY: tY,
 			alive:   true,
@@ -152,45 +174,46 @@ func NewTroop(g *Game, t troopType, sX, sY float64, tX, tY float64) *Troop {
 			sprite:  newSprite(knightImage, 4, 8, 1, 1, 1),
 			startX:  sX,
 			startY:  sY,
+			x:       sX,
+			y:       sY,
+			targetX: tX,
+			targetY: tY,
+			alive:   true,
+		}
+	case CastleTmp:
+		troop = &Troop{
+			game:    g,
+			sprite:  newSprite(castleImage, 4, 3, 0.3, 0.3, 2),
+			startX:  sX,
+			startY:  sY,
+			x:       sX,
+			y:       sY,
 			targetX: tX,
 			targetY: tY,
 			alive:   true,
 		}
 	}
+
 	return troop
 }
 
 func (t *Troop) Draw(screen *ebiten.Image) {
-	fmt.Println(t.width, t.height)
-	op := &ebiten.DrawImageOptions{}
-	op.GeoM.Scale(0.2, 0.2)
-
-	op.GeoM.Translate(-float64(t.width)/2, -float64(t.height)/2)
-	op.GeoM.Translate(t.posX, t.posY)
-
-	// Calculate which frame to show
-	i := (t.game.tickCounter / t.numerOfFrames) % t.numerOfFrames //consider making slower by diving the counter
-	fmt.Println("Some: ", i)
-	sx, sy := i*t.width, 0
-
-	// Draw the specific frame "slice"
-	sub := t.image.SubImage(image.Rect(sx, sy, sx+t.width, sy+t.height)).(*ebiten.Image)
-	screen.DrawImage(sub, op)
+	screen.DrawImage(t.sprite.selectFrame(t.game.tickCounter, t.x, t.y))
 }
 
 func (t *Troop) Update( /*add game*/ ) error {
-	t.moveTo(t.targetX, t.target_y)
+	t.moveTo(t.targetX, t.targetY)
 	return nil
 }
 
 func (t *Troop) moveTo(targetX, targetY float64) {
-	dx := targetX - t.posX
-	dy := targetY - t.posY
+	dx := targetX - t.x
+	dy := targetY - t.y
 
 	distance := math.Sqrt(dx*dx + dy*dy)
 
 	if distance > 1 {
-		t.posX += (dx / distance) * 1
-		t.posY += (dy / distance) * 1
+		t.x += (dx / distance) * 1
+		t.y += (dy / distance) * 1
 	}
 }
