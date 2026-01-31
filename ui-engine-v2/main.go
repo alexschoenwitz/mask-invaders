@@ -28,6 +28,7 @@ const (
 	maxTroopSize  = 10
 	turnDuration  = 100 * time.Millisecond
 	pollInterval  = 200 * time.Millisecond // How often to poll the server
+	tweenDuration = 150 * time.Millisecond // How long to smoothly tween to new positions
 	defaultAPIURL = "http://localhost:8080"
 )
 
@@ -73,6 +74,11 @@ type Game struct {
 	isLiveMode      bool      // true if using live API, false if replay mode
 	lastStateTime   time.Time // When we received the last state update
 	lastStateTurn   int64     // Last turn number we received from server
+	// Tweening fields for smooth interpolation
+	tweenStartTime  time.Time // When we started tweening
+	tweenStartTurn  float64   // Turn value when we started tweening
+	tweenTargetTurn float64   // Target turn value from server
+	tweenDuration   time.Duration // How long to tween
 }
 
 // Player colors palette
@@ -197,6 +203,7 @@ func (g *Game) pollServerState() error {
 		g.lastStateTime = time.Time{}
 		g.lastStateTurn = 0
 		g.currentTurn = 0
+		g.tweenStartTime = time.Time{}
 	}
 
 	// Check if this is a new state
@@ -209,11 +216,24 @@ func (g *Game) pollServerState() error {
 			g.assignPlayerColors()
 		}
 
-		// Update timing info - this is our sync point
+		// Update timing info - start a tween to the new server position
 		g.currentStateIdx = len(g.states) - 1
 		g.lastStateTurn = stateResponse.State.Turn
 		g.lastStateTime = time.Now()
-		g.currentTurn = float64(stateResponse.State.Turn)
+		
+		// Set up tween from current position to server position
+		targetTurn := float64(stateResponse.State.Turn)
+		if g.currentTurn > 0 && math.Abs(targetTurn-g.currentTurn) > 0.01 {
+			// Only tween if there's a meaningful difference
+			g.tweenStartTime = time.Now()
+			g.tweenStartTurn = g.currentTurn
+			g.tweenTargetTurn = targetTurn
+			g.tweenDuration = tweenDuration
+		} else {
+			// First state or no significant difference - snap immediately
+			g.currentTurn = targetTurn
+			g.tweenStartTime = time.Time{}
+		}
 		
 		g.updateDisplayState()
 	}
@@ -316,21 +336,33 @@ func (g *Game) Update() error {
 			g.updateDisplayState()
 		}
 	} else if g.lastStateTurn > 0 {
-		// Live mode: smoothly interpolate from last known server turn
-		// Calculate how much time has passed since the last state update
-		elapsed := now.Sub(g.lastStateTime).Seconds()
-		
-		// Estimate turn progress (assuming 1 turn = pollInterval * 2)
-		// This is a rough estimate - movements will sync when new states arrive
-		estimatedTurnProgress := elapsed / (pollInterval.Seconds() * 2)
-		
-		// Current turn is the last known turn plus smooth interpolation
-		// Cap the interpolation at 0.5 turns ahead to avoid running too far ahead
-		if estimatedTurnProgress > 0.5 {
-			estimatedTurnProgress = 0.5
+		// Live mode: tween between positions
+		if !g.tweenStartTime.IsZero() {
+			elapsed := now.Sub(g.tweenStartTime)
+			
+			if elapsed >= g.tweenDuration {
+				// Tween complete - continue forward from target
+				g.currentTurn = g.tweenTargetTurn
+				g.tweenStartTime = time.Time{} // Clear tween
+			} else {
+				// Tween in progress - use easing function
+				t := float64(elapsed) / float64(g.tweenDuration)
+				// Use ease-out cubic for smooth deceleration
+				t = 1 - math.Pow(1-t, 3)
+				g.currentTurn = g.tweenStartTurn + (g.tweenTargetTurn-g.tweenStartTurn)*t
+			}
 		}
 		
-		g.currentTurn = float64(g.lastStateTurn) + estimatedTurnProgress
+		// After tween completes or if no tween, slowly advance
+		if g.tweenStartTime.IsZero() {
+			elapsed := now.Sub(g.lastStateTime).Seconds()
+			// Advance slowly to avoid getting too far ahead
+			estimatedProgress := elapsed / (pollInterval.Seconds() * 3)
+			if estimatedProgress > 0.3 {
+				estimatedProgress = 0.3
+			}
+			g.currentTurn = float64(g.lastStateTurn) + estimatedProgress
+		}
 	}
 	
 	// Always update movements every frame for smooth animation
