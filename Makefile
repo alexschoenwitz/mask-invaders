@@ -28,8 +28,5 @@ run-game: generate
 	go run ./client/very-clever-bot/main.go -g $(GAME_ID) & \
 	go run ./client/very-clever-bot/main.go -g $(GAME_ID) & \
 	go run ./client/very-clever-bot/main.go -g $(GAME_ID) & \
-	go run ./client/very-clever-bot/main.go -g $(GAME_ID) & \
-	go run ./client/very-clever-bot/main.go -g $(GAME_ID) & \
-	go run ./client/very-clever-bot/main.go -g $(GAME_ID) & \
 	sleep 1 && go run ./client/very-clever-bot/main.go -s -g $(GAME_ID) & \
 	wait

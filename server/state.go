@@ -115,11 +115,9 @@ func processTurn(currentState *api.State, actions map[string]map[string]*api.Act
 			// Re-validate ownership (city might have been captured this turn)
 			originCity := state.Cities[attack.From]
 			if originCity == nil {
-				fmt.Printf("origin city %s does not exist, skipping action\n", attack.From)
 				continue
 			}
 			if originCity.Player != playerID {
-				// fmt.Printf("city %s no longer owned by %s, skipping action\n", attack.From, playerID)
 				continue
 			}
 

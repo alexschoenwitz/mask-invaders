@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/alexschoenwitz/mask-invaders/api/server/api"
 	"github.com/google/uuid"
@@ -10,7 +9,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/proto"
 )
 
 type contextKey string
@@ -95,8 +93,6 @@ func serverInterceptor(ctx context.Context,
 		ctx = context.WithValue(ctx, playerTokenKey, authHeaders[0])
 	}
 
-	b, _ := proto.Marshal(req.(proto.Message))
-	fmt.Println(string(b))
 	p, ok := req.(GameScopedRequest)
 	if !ok {
 		return nil, status.Error(codes.PermissionDenied, "permission denied 1")
