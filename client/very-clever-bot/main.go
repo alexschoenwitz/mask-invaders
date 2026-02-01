@@ -39,6 +39,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to register: %v", err)
 	}
+	log.SetPrefix("[VeryCleverBot][" + playerID + "][" + botName + "] ")
 	log.Printf("Registered with token: %s, playerID: %s", token, playerID)
 
 	client := &http.Client{Timeout: 10 * time.Second}

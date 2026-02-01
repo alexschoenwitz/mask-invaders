@@ -28,6 +28,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to register: %v", err)
 	}
+	log.SetPrefix("[AdvancedBot][" + playerID + "][" + *botName + "] ")
 	log.Printf("Registered as player %s with name %s", playerID, *botName)
 
 	// Create bot instance

@@ -21,6 +21,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to register: %v", err)
 	}
+	log.SetPrefix("[DumbBot][" + playerID + "][" + botName + "] ")
 	log.Printf("Registered with playerID: %s", playerID)
 
 	// 2. Try to start the game for 2 minutes
