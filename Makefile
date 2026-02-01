@@ -21,6 +21,10 @@ run-game: generate
 	$(eval GAME_ID := $(shell curl -s -X POST http://localhost:8080/v1/games | jq -r '.gameId'))
 	@echo "Generated Game ID: $(GAME_ID)"
 	@trap 'kill 0' SIGINT; \
+	go run ./client/advanced-bot/main.go -g $(GAME_ID) & \
+	go run ./client/very-clever-bot/main.go -g $(GAME_ID) & \
+	go run ./client/very-clever-bot/main.go -g $(GAME_ID) & \
+	go run ./client/very-clever-bot/main.go -g $(GAME_ID) & \
 	go run ./client/very-clever-bot/main.go -g $(GAME_ID) & \
 	go run ./client/very-clever-bot/main.go -g $(GAME_ID) & \
 	go run ./client/very-clever-bot/main.go -g $(GAME_ID) & \
