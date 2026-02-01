@@ -188,6 +188,7 @@ func (s *game) initializeGameState() *game {
 		for i := range 3 {
 			cityName := fmt.Sprintf("City-%s-%d", p.id, i)
 			initialState.Cities[cityName] = &api.City{
+				Id:     cityName,
 				Player: p.id,
 				Troops: map[string]int64{
 					troopA: 10,

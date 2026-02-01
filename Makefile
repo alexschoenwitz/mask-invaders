@@ -9,13 +9,13 @@ fix:
 	@buf format -w
 
 run-server: generate
-	@go run ./server/... -turn-duration-ms=50
+	@go run ./server/... -turn-duration-ms=300
 
 run-ui: generate
 	@go run ./ui-engine/...
 
 run-ui2: generate
-	@go run ./ui-engine-v2/... -turn-duration-ms=50
+	@go run ./ui-engine-v2/... -turn-duration-ms=300
 
 run-game: generate
 	$(eval GAME_ID := $(shell curl -s -X POST http://localhost:8080/v1/games | jq -r '.gameId'))
@@ -25,12 +25,10 @@ run-game: generate
 	go run ./client/advanced-bot/main.go -g $(GAME_ID) & \
 	go run ./client/advanced-bot/main.go -g $(GAME_ID) & \
 	go run ./client/advanced-bot/main.go -g $(GAME_ID) & \
-	go run ./client/advanced-bot/main.go -g $(GAME_ID) & \
-	go run ./client/advanced-bot/main.go -g $(GAME_ID) & \
 	go run ./client/defensive-bot/main.go -g $(GAME_ID) & \
 	go run ./client/defensive-bot/main.go -g $(GAME_ID) & \
-	go run ./client/very-clever-bot/main.go -g $(GAME_ID) & \
-	go run ./client/very-clever-bot/main.go -g $(GAME_ID) & \
+	go run ./client/defensive-bot/main.go -g $(GAME_ID) & \
+	go run ./client/defensive-bot/main.go -g $(GAME_ID) & \
 	go run ./client/very-clever-bot/main.go -g $(GAME_ID) & \
 	go run ./client/very-clever-bot/main.go -g $(GAME_ID) & \
 	go run ./client/very-clever-bot/main.go -g $(GAME_ID) & \
