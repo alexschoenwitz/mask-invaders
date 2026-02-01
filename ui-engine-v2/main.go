@@ -1040,7 +1040,7 @@ func (g *Game) drawTroopsAtCity(screen *ebiten.Image, city *CityDisplay, scale f
 		count := city.Troops[troopType]
 		if count > 0 {
 			angle := 2 * math.Pi * float64(i) / 3 // Distribute around city
-			offset := (city.Size/2 + 15) * scale
+			offset := (city.Size/2 + 3) * scale    // Even closer to castle (was 8)
 			troopX := city.X*scale + offset*math.Cos(angle)
 			troopY := city.Y*scale + offset*math.Sin(angle)
 

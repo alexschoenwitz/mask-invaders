@@ -98,32 +98,15 @@ func (g *Game) drawCity(screen *ebiten.Image, city *CityDisplay, scale float64) 
 		}
 	}
 
-	// Draw oval shadow marker below castle
-	shadowColor := color.RGBA{
-		R: playerColor.R,
-		G: playerColor.G,
-		B: playerColor.B,
-		A: 76, // 30% of 255
-	}
-	ovalCenterX := float32(x)
-	ovalCenterY := float32(y) + castleSize*0.8
-	ovalRadiusX := castleSize * 0.6
-	ovalRadiusY := castleSize * 0.2
-	drawFilledOval(screen, ovalCenterX, ovalCenterY, ovalRadiusX, ovalRadiusY, shadowColor)
+	// Don't draw city name - just show the colored castle and troop counts
+	
+	// Draw troop counts in compact single line format: "5/10/3"
+	troopText := fmt.Sprintf("%d/%d/%d", 
+		city.Troops["A"], 
+		city.Troops["B"], 
+		city.Troops["C"])
+	ebitenutil.DebugPrintAt(screen, troopText, int(x-15*scale), int(y+float64(castleSize)+5*scale))
 
-	// Draw city name above the castle
-	ebitenutil.DebugPrintAt(screen, city.Name, int(x-30*scale), int(y-40*scale))
-
-	// Draw troop counts next to the castle
-	troopTypes := []string{"A", "B", "C"}
-	yOffset := int(y) - int(20*scale)
-	for _, troopType := range troopTypes {
-		count := city.Troops[troopType]
-		text := fmt.Sprintf("%s:%d", troopType, count)
-		ebitenutil.DebugPrintAt(screen, text, int(x+25*scale), yOffset)
-		yOffset += int(12 * scale)
-	}
-
-	// Draw troops around the city
+	// Draw troops closer around the city
 	g.drawTroopsAtCity(screen, city, scale)
 }
