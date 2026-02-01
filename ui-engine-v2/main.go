@@ -27,8 +27,8 @@ const (
 	screenHeight     = 800
 	minCitySize      = 50
 	maxCitySize      = 60
-	pollInterval     = 200 * time.Millisecond // How often to poll the server
-	turnPlaybackRate = 500 * time.Millisecond // Fixed rate to consume states from buffer
+	pollInterval     = 100 * time.Millisecond // How often to poll the server
+	turnPlaybackRate = 300 * time.Millisecond // Fixed rate to consume states from buffer
 	minBufferStates  = 3                      // Minimum states to buffer before starting playback
 	stateBufferSize  = 20                     // Number of states to keep in buffer
 	defaultAPIURL    = "http://localhost:8080"
@@ -485,12 +485,12 @@ func (g *Game) Update() error {
 func (g *Game) handleDropdownInput() {
 	if ebiten.IsMouseButtonPressed(ebiten.MouseButtonLeft) {
 		mx, my := ebiten.CursorPosition()
-		
+
 		// Check if clicking on dropdown header
 		dropdownX := 10
 		dropdownWidth := 200
 		dropdownHeight := 25
-		
+
 		if mx >= dropdownX && mx <= dropdownX+dropdownWidth &&
 			my >= g.dropdownY && my <= g.dropdownY+dropdownHeight {
 			// Toggle dropdown on click
@@ -505,7 +505,7 @@ func (g *Game) handleDropdownInput() {
 			}
 			return
 		}
-		
+
 		// Check if clicking on dropdown options
 		if g.dropdownExpanded {
 			optionHeight := 20
@@ -806,8 +806,8 @@ func (g *Game) drawGameDropdown(screen *ebiten.Image) {
 	screen.DrawImage(dropdownBg, op)
 
 	// Draw border
-	vector.StrokeRect(screen, float32(dropdownX), float32(dropdownY), 
-		float32(dropdownWidth), float32(dropdownHeight), 1, 
+	vector.StrokeRect(screen, float32(dropdownX), float32(dropdownY),
+		float32(dropdownWidth), float32(dropdownHeight), 1,
 		color.RGBA{100, 100, 120, 255}, false)
 
 	// Draw selected game text
@@ -833,7 +833,7 @@ func (g *Game) drawGameDropdown(screen *ebiten.Image) {
 	if g.dropdownExpanded && len(g.availableGames) > 0 {
 		optionHeight := 20
 		totalHeight := len(g.availableGames) * optionHeight
-		
+
 		// Draw options background
 		optionsBg := ebiten.NewImage(dropdownWidth, totalHeight)
 		optionsBg.Fill(color.RGBA{30, 30, 40, 240})
@@ -842,14 +842,14 @@ func (g *Game) drawGameDropdown(screen *ebiten.Image) {
 		screen.DrawImage(optionsBg, optionsOp)
 
 		// Draw border
-		vector.StrokeRect(screen, float32(dropdownX), float32(dropdownY+dropdownHeight), 
-			float32(dropdownWidth), float32(totalHeight), 1, 
+		vector.StrokeRect(screen, float32(dropdownX), float32(dropdownY+dropdownHeight),
+			float32(dropdownWidth), float32(totalHeight), 1,
 			color.RGBA{100, 100, 120, 255}, false)
 
 		// Draw each game option
 		for i, gameID := range g.availableGames {
 			optionY := dropdownY + dropdownHeight + i*optionHeight
-			
+
 			// Highlight selected game
 			if gameID == g.gameID {
 				highlight := ebiten.NewImage(dropdownWidth-2, optionHeight-1)
@@ -858,7 +858,7 @@ func (g *Game) drawGameDropdown(screen *ebiten.Image) {
 				highlightOp.GeoM.Translate(float64(dropdownX+1), float64(optionY+1))
 				screen.DrawImage(highlight, highlightOp)
 			}
-			
+
 			// Draw game ID text
 			displayText := gameID
 			if len(displayText) > 25 {
@@ -1040,7 +1040,7 @@ func (g *Game) drawTroopsAtCity(screen *ebiten.Image, city *CityDisplay, scale f
 		count := city.Troops[troopType]
 		if count > 0 {
 			angle := 2 * math.Pi * float64(i) / 3 // Distribute around city
-			offset := (city.Size/2 + 3) * scale    // Even closer to castle (was 8)
+			offset := (city.Size/2 + 3) * scale   // Even closer to castle (was 8)
 			troopX := city.X*scale + offset*math.Cos(angle)
 			troopY := city.Y*scale + offset*math.Sin(angle)
 

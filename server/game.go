@@ -37,7 +37,7 @@ type game struct {
 }
 
 func (s *game) run(ctx context.Context) {
-	ticker := time.NewTicker(500 * time.Millisecond)
+	ticker := time.NewTicker(300 * time.Millisecond)
 	for {
 		select {
 		case <-ctx.Done():
