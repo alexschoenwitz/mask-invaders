@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/alexschoenwitz/mask-invaders/api/server/api"
 	"github.com/google/uuid"
@@ -9,6 +10,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 type contextKey string
@@ -23,25 +25,30 @@ type player struct {
 }
 
 func (s *server) Register(ctx context.Context, req *api.RegisterRequest) (*api.RegisterResponse, error) {
-	s.playersLock.Lock()
-	defer s.playersLock.Unlock()
+	g, ok := s.getGame(req.GameId)
+	if !ok {
+		return nil, status.Error(codes.NotFound, "game not found")
+	}
+
+	g.playersLock.Lock()
+	defer g.playersLock.Unlock()
 
 	if req.GetName() == "" {
 		return nil, status.Error(codes.InvalidArgument, "name cannot be empty")
 	}
 
-	if s.gameStarted.Load() {
+	if g.started.Load() {
 		return nil, status.Error(codes.FailedPrecondition, "game already started")
 	}
 
-	if len(s.players) >= 16 {
+	if len(g.players) >= 16 {
 		return nil, status.Error(codes.InvalidArgument, "no more players allowed")
 	}
 
 	id := uuid.NewString()
 	token := uuid.NewString()
 
-	s.players[token] = &player{
+	g.players[token] = &player{
 		name: req.Name,
 		id:   id,
 	}
@@ -55,6 +62,8 @@ var unauthenticatedMethods = map[string]struct{}{
 	api.Server_Register_FullMethodName:        {},
 	api.Server_GetStateHistory_FullMethodName: {},
 	api.Server_GetState_FullMethodName:        {},
+	api.Server_ListGames_FullMethodName:       {},
+	api.Server_CreateGame_FullMethodName:      {},
 }
 
 func serverInterceptor(ctx context.Context,
@@ -62,6 +71,10 @@ func serverInterceptor(ctx context.Context,
 	info *grpc.UnaryServerInfo,
 	handler grpc.UnaryHandler,
 ) (any, error) {
+	type GameScopedRequest interface {
+		GetGameId() string
+	}
+
 	s, ok := info.Server.(*server)
 	if !ok {
 		return nil, status.Error(codes.Internal, "what happened to the server?")
@@ -81,22 +94,39 @@ func serverInterceptor(ctx context.Context,
 	if len(authHeaders) > 0 {
 		ctx = context.WithValue(ctx, playerTokenKey, authHeaders[0])
 	}
-	if !isAuthorized(s, ctx) {
-		return nil, status.Error(codes.PermissionDenied, "permission denied")
+
+	b, _ := proto.Marshal(req.(proto.Message))
+	fmt.Println(string(b))
+	p, ok := req.(GameScopedRequest)
+	if !ok {
+		return nil, status.Error(codes.PermissionDenied, "permission denied 1")
+	}
+
+	id := p.GetGameId()
+	if !isAuthorized(s, id, ctx) {
+		return nil, status.Error(codes.PermissionDenied, "permission denied 2")
 	}
 
 	return handler(ctx, req)
 }
 
-func isAuthorized(s *server, ctx context.Context) bool {
+func isAuthorized(s *server, gameId string, ctx context.Context) bool {
 	playerToken, playerExists := ctx.Value(playerTokenKey).(string)
 	if !playerExists {
 		return false
 	}
 
-	s.playersLock.RLock()
-	defer s.playersLock.RUnlock()
-	_, playerExists = s.players[playerToken]
+	s.gamesLock.RLock()
+	g, gameExists := s.games[gameId]
+	s.gamesLock.RUnlock()
+
+	if !gameExists {
+		return false
+	}
+
+	g.playersLock.RLock()
+	defer g.playersLock.RUnlock()
+	_, playerExists = g.players[playerToken]
 	return playerExists
 }
 

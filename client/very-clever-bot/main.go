@@ -24,7 +24,10 @@ const (
 	troopC = "C"
 )
 
-var attemptStart = flag.Bool("s", false, "flag to try to start the game")
+var (
+	attemptStart = flag.Bool("s", false, "flag to try to start the game")
+	gameID       = flag.String("g", "", "game id")
+)
 
 func init() {
 	flag.Parse()
@@ -32,7 +35,7 @@ func init() {
 
 func main() {
 	// 1. Register the bot
-	token, playerID, err := register()
+	token, playerID, err := register(*gameID)
 	if err != nil {
 		log.Fatalf("Failed to register: %v", err)
 	}
@@ -42,13 +45,12 @@ func main() {
 	fmt.Println(attemptStart)
 	fmt.Println(*attemptStart)
 	if *attemptStart {
-		print("hello")
 		// 2. Try to start the game for 2 minutes
 		gameStarted := false
 		startTime := time.Now()
 
 		for time.Since(startTime) < 2*time.Minute {
-			err := startGame(client, token)
+			err := startGame(client, token, *gameID)
 			if err == nil {
 				log.Println("Game started successfully!")
 				gameStarted = true
@@ -65,17 +67,20 @@ func main() {
 	}
 
 	// 3. Play the game with the clever strategy
-	playGame(client, token, playerID)
+	playGame(client, token, playerID, *gameID)
 }
 
-func register() (string, string, error) {
-	reqBody := &api.RegisterRequest{Name: botName}
+func register(gameID string) (string, string, error) {
+	reqBody := &api.RegisterRequest{
+		GameId: gameID,
+		Name:   botName,
+	}
 	jsonData, err := protojson.Marshal(reqBody)
 	if err != nil {
 		return "", "", err
 	}
 
-	resp, err := http.Post(serverURL+"/v1/register", "application/json", bytes.NewBuffer(jsonData))
+	resp, err := http.Post(serverURL+"/v1/games/"+gameID+"/register", "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
 		return "", "", err
 	}
@@ -94,11 +99,18 @@ func register() (string, string, error) {
 	return regResp.Token, regResp.Id, nil
 }
 
-func startGame(client *http.Client, token string) error {
-	req, err := http.NewRequest("POST", serverURL+"/v1/start", nil)
+func startGame(client *http.Client, token string, gameID string) error {
+	reqBody := &api.StartGameRequest{GameId: gameID}
+	jsonData, err := protojson.Marshal(reqBody)
 	if err != nil {
 		return err
 	}
+
+	req, err := http.NewRequest("POST", serverURL+"/v1/games/"+gameID+"/start", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("authorization", token)
 
 	resp, err := client.Do(req)
@@ -120,12 +132,12 @@ func startGame(client *http.Client, token string) error {
 	return nil
 }
 
-func playGame(client *http.Client, token, playerID string) {
+func playGame(client *http.Client, token, playerID, gameID string) {
 	log.Println("Waiting for game to start...")
 
 	// Wait for the game to start
 	for {
-		state, err := getGameState(client, token)
+		state, err := getGameState(client, token, gameID)
 		if err != nil {
 			log.Printf("Failed to get game state: %v", err)
 			time.Sleep(1 * time.Second)
@@ -146,7 +158,7 @@ func playGame(client *http.Client, token, playerID string) {
 	for {
 		time.Sleep(10 * time.Millisecond)
 
-		state, err := getGameState(client, token)
+		state, err := getGameState(client, token, gameID)
 		if err != nil {
 			log.Printf("Failed to get game state: %v", err)
 			continue
@@ -183,7 +195,7 @@ func playGame(client *http.Client, token, playerID string) {
 			for _, cityName := range myCities {
 				troopType := chooseBestTroopType(enemyCities, state)
 				log.Printf("City %s: No target, building troop type %s", cityName, troopType)
-				err = createTroop(client, token, playerID, cityName, troopType)
+				err = createTroop(client, token, playerID, gameID, cityName, troopType)
 				if err != nil {
 					log.Printf("Failed to create troop in %s: %v", cityName, err)
 				}
@@ -200,7 +212,7 @@ func playGame(client *http.Client, token, playerID string) {
 			if totalTroops < 8 {
 				troopType := chooseBestTroopType(enemyCities, state)
 				log.Printf("City %s: Building troop type %s (current troops: %d)", cityName, troopType, totalTroops)
-				err = createTroop(client, token, playerID, cityName, troopType)
+				err = createTroop(client, token, playerID, gameID, cityName, troopType)
 				if err != nil {
 					log.Printf("Failed to create troop in %s: %v", cityName, err)
 				}
@@ -210,7 +222,7 @@ func playGame(client *http.Client, token, playerID string) {
 				if distance == math.MaxInt64 {
 					// Can't reach target, build troops
 					troopType := chooseBestTroopType(enemyCities, state)
-					err = createTroop(client, token, playerID, cityName, troopType)
+					err = createTroop(client, token, playerID, gameID, cityName, troopType)
 					if err != nil {
 						log.Printf("Failed to create troop in %s: %v", cityName, err)
 					}
@@ -230,7 +242,7 @@ func playGame(client *http.Client, token, playerID string) {
 
 				if len(attackTroops) > 0 {
 					log.Printf("City %s: Attacking %s with %d troops (keeping 40%% defense)", cityName, bestTarget, getTroopStrength(attackTroops))
-					err = attack(client, token, playerID, cityName, bestTarget, attackTroops)
+					err = attack(client, token, playerID, gameID, cityName, bestTarget, attackTroops)
 					if err != nil {
 						log.Printf("Failed to attack from %s: %v", cityName, err)
 					}
@@ -240,8 +252,8 @@ func playGame(client *http.Client, token, playerID string) {
 	}
 }
 
-func getGameState(client *http.Client, token string) (*api.State, error) {
-	req, err := http.NewRequest("GET", serverURL+"/v1/state", nil)
+func getGameState(client *http.Client, token string, gameID string) (*api.State, error) {
+	req, err := http.NewRequest("GET", serverURL+"/v1/games/"+gameID+"/state", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -525,8 +537,9 @@ func chooseBestTroopType(enemyCities []string, state *api.State) string {
 	}
 }
 
-func createTroop(client *http.Client, token, playerID, city, troopType string) error {
+func createTroop(client *http.Client, token, playerID, gameID, city, troopType string) error {
 	action := &api.PostActionRequest{
+		GameId: gameID,
 		Action: &api.Action{
 			Player: playerID,
 			Action: &api.Action_CreateTroop{
@@ -543,7 +556,7 @@ func createTroop(client *http.Client, token, playerID, city, troopType string) e
 		return err
 	}
 
-	req, err := http.NewRequest("POST", serverURL+"/v1/action", bytes.NewBuffer(jsonData))
+	req, err := http.NewRequest("POST", serverURL+"/v1/games/"+gameID+"/action", bytes.NewBuffer(jsonData))
 	if err != nil {
 		return err
 	}
@@ -564,8 +577,9 @@ func createTroop(client *http.Client, token, playerID, city, troopType string) e
 	return nil
 }
 
-func attack(client *http.Client, token, playerID, from, to string, troops map[string]int64) error {
+func attack(client *http.Client, token, playerID, gameID, from, to string, troops map[string]int64) error {
 	action := &api.PostActionRequest{
+		GameId: gameID,
 		Action: &api.Action{
 			Player: playerID,
 			Action: &api.Action_Attack{
@@ -597,7 +611,7 @@ func attack(client *http.Client, token, playerID, from, to string, troops map[st
 		return err
 	}
 
-	req, err := http.NewRequest("POST", serverURL+"/v1/action", bytes.NewBuffer(jsonData))
+	req, err := http.NewRequest("POST", serverURL+"/v1/games/"+gameID+"/action", bytes.NewBuffer(jsonData))
 	if err != nil {
 		return err
 	}

@@ -2,11 +2,8 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
-	"os"
-	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -49,133 +46,6 @@ var (
 	troopOrder = []string{troopA, troopB, troopC}
 )
 
-func calculateBattle(attackingTroops, defendingTroops map[string]int64) (attackerWins bool, survivingTroops map[string]int64) {
-	// Convert troops to arrays following troopOrder [A, B, C]
-	army1 := make([]float64, 3)
-	army2 := make([]float64, 3)
-	for i, troopType := range troopOrder {
-		army1[i] = float64(attackingTroops[troopType])
-		army2[i] = float64(defendingTroops[troopType])
-	}
-
-	// Calculate total troop counts
-	total1 := 0.0
-	total2 := 0.0
-	for i := range 3 {
-		total1 += army1[i]
-		total2 += army2[i]
-	}
-
-	// Handle edge cases
-	if total1 == 0 && total2 == 0 {
-		return true, make(map[string]int64)
-	}
-	if total1 == 0 {
-		return false, defendingTroops
-	}
-	if total2 == 0 {
-		return true, attackingTroops
-	}
-
-	// 1. Calculate Combat Effectiveness (Quality)
-	// eff_1 = (army1 @ D @ army2) / (total1 * total2)
-	var eff1, eff2 float64
-	for i := range 3 {
-		for j := range 3 {
-			impact := troopImpact[troopOrder[i]][troopOrder[j]]
-			eff1 += army1[i] * impact * army2[j]
-			eff2 += army2[i] * impact * army1[j]
-		}
-	}
-	eff1 /= (total1 * total2)
-	eff2 /= (total1 * total2)
-
-	// 2. Linear Law: Power = Quality * Quantity
-	power1 := eff1 * total1
-	power2 := eff2 * total2
-
-	// 3. Determine winner and calculate survivors
-	survivingTroops = make(map[string]int64)
-	if power1 > power2 {
-		// Attacker wins
-		survivingRatio := (power1 - power2) / power1
-		for i, troopType := range troopOrder {
-			survivingTroops[troopType] = int64(army1[i] * survivingRatio)
-		}
-		return true, survivingTroops
-	} else {
-		// Defender wins
-		survivingRatio := (power2 - power1) / power2
-		for i, troopType := range troopOrder {
-			survivingTroops[troopType] = int64(army2[i] * survivingRatio)
-		}
-		return false, survivingTroops
-	}
-}
-
-func (s *server) run(ctx context.Context) {
-	ticker := time.NewTicker(500 * time.Millisecond)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case action := <-s.actionQueue:
-			playerID := action.GetPlayer()
-
-			// Get the city this action is for
-			cityID := getCityFromAction(action)
-			if cityID == "" {
-				continue // Invalid action
-			}
-
-			// Initialize map if needed
-			s.actionsLock.Lock()
-			if s.submittedActions[playerID] == nil {
-				s.submittedActions[playerID] = make(map[string]*api.Action)
-			}
-
-			// Store the action (last one wins - allows clients to update their guess)
-			s.submittedActions[playerID][cityID] = action
-			s.actionsLock.Unlock()
-
-		case <-ticker.C:
-			if !s.gameStarted.Load() {
-				continue
-			}
-
-			// Timer expired, process the turn with whatever actions we have!
-			actions := s.submittedActions
-			s.submittedActions = make(map[string]map[string]*api.Action)
-
-			s.stateLock.Lock()
-			// Skip processing if game hasn't started or state is nil (e.g., after reset)
-			if s.currentState == nil || !s.gameStarted.Load() {
-				s.stateLock.Unlock()
-				continue
-			}
-
-			if s.turnCount > 1_000_000 {
-				s.stateLock.Unlock()
-				return // you really suck at this game if it goes on for more than 1000 turns
-			}
-			s.turnCount++
-			nextState := processTurn(s.currentState, actions, s.turnCount)
-			nextState.Turn = s.turnCount // Set turn on the new state before making it current
-			s.stateHistory = append(s.stateHistory, s.currentState)
-			s.currentState = nextState
-			victory := s.checkWinCondition()
-			s.stateLock.Unlock()
-
-			if victory {
-				log.Println("Victory condition met, resetting game in 5 seconds...")
-				time.Sleep(5 * time.Second)
-				s.resetGameState()
-				log.Println("Game state reset. Waiting for players to register again...")
-			}
-		}
-	}
-}
-
 // getCityFromAction extracts the city name from an action
 func getCityFromAction(action *api.Action) string {
 	switch a := action.Action.(type) {
@@ -188,23 +58,6 @@ func getCityFromAction(action *api.Action) string {
 	default:
 		return ""
 	}
-}
-
-// check victory condition: all cities owned by one player
-func (s *server) checkWinCondition() bool {
-	victor := ""
-	for _, city := range s.currentState.Cities {
-		if victor == "" {
-			victor = city.Player
-		} else if victor != city.Player {
-			return false
-		}
-	}
-	fmt.Printf("Player %s has won the game in %d turns!\n", victor, s.turnCount)
-	// write down history in json
-	b, _ := json.Marshal(append(s.stateHistory, s.currentState))
-	_ = os.WriteFile("gamehistory.json", b, 0o600)
-	return true
 }
 
 func processTurn(currentState *api.State, actions map[string]map[string]*api.Action, turnCount int64) *api.State {
@@ -343,71 +196,23 @@ func processTurn(currentState *api.State, actions map[string]map[string]*api.Act
 }
 
 func (s *server) StartGame(ctx context.Context, req *api.StartGameRequest) (*api.StartGameResponse, error) {
-	s.playersLock.Lock()
-	defer s.playersLock.Unlock()
-
-	if len(s.players) < 2 {
-		return nil, status.Error(codes.FailedPrecondition, "not enough players to start the game")
+	g, ok := s.getGame(req.GameId)
+	if !ok {
+		return nil, status.Error(codes.NotFound, "game not found")
 	}
 
-	if !s.gameStarted.CompareAndSwap(false, true) {
-		return nil, status.Error(codes.FailedPrecondition, "game already started")
+	err := g.start()
+	if err != nil {
+		return nil, err
 	}
-
-	s.initializeGameState()
 
 	return &api.StartGameResponse{}, nil
 }
 
-// initializeGameState creates the initial game state (separated for reuse)
-func (s *server) initializeGameState() {
-	// initialize the game state
-	initialState := &api.State{
-		Cities:    make(map[string]*api.City),
-		Movements: []*api.Movement{},
-		Distances: make(map[string]*api.Distance),
-	}
-
-	for _, p := range s.players {
-		// do a 3 cities per player with equal troops
-		for i := range 3 {
-			cityName := fmt.Sprintf("City-%s-%d", p.id, i)
-			initialState.Cities[cityName] = &api.City{
-				Player: p.id,
-				Troops: map[string]int64{
-					troopA: 10,
-					troopB: 10,
-					troopC: 10,
-				},
-			}
-		}
-	}
-
-	// define some distances between cities with randomness for variety between 4 and 8 turns
-	cityNames := []string{}
-	for cityName := range initialState.Cities {
-		cityNames = append(cityNames, cityName)
-	}
-	for i := 0; i < len(cityNames); i++ {
-		for j := i + 1; j < len(cityNames); j++ {
-			distance := int64(4 + (i+j)%5) // pseudo-random for now
-			initialState.Distances[cityNames[i]+cityNames[j]] = &api.Distance{
-				Edge:     cityNames[i] + cityNames[j],
-				Distance: distance,
-			}
-		}
-	}
-
-	s.currentState = initialState
-	s.stateHistory = []*api.State{}
-	s.turnCount = 0
-}
-
 // resetGameState resets the game state and clears players so they can register again
-// resetGameState resets the game state and clears players so they can register again
-func (s *server) resetGameState() {
+func (s *game) resetGameState() {
 	s.stateLock.Lock()
-	s.gameStarted.Store(false)
+	s.started.Store(false)
 	s.currentState = nil
 	s.stateHistory = []*api.State{}
 	s.turnCount = 0
@@ -425,46 +230,43 @@ func (s *server) resetGameState() {
 	log.Println("All players cleared. Ready for new registrations.")
 }
 
-func (s *server) ResetGame(ctx context.Context, req *api.ResetGameRequest) (*api.ResetGameResponse, error) {
-	s.playersLock.Lock()
-	defer s.playersLock.Unlock()
+func (s *server) getGame(gameID string) (*game, bool) {
+	s.gamesLock.RLock()
+	defer s.gamesLock.RUnlock()
 
-	s.stateLock.Lock()
-	defer s.stateLock.Unlock()
-
-	s.gameStarted.Store(false)
-	s.currentState = nil
-	s.stateHistory = []*api.State{}
-	s.turnCount = 0
-
-	s.actionsLock.Lock()
-	s.submittedActions = make(map[string]map[string]*api.Action)
-	s.actionsLock.Unlock()
-
-	s.players = make(map[string]*player)
-
-	return &api.ResetGameResponse{}, nil
+	g, ok := s.games[gameID]
+	return g, ok
 }
 
 func (s *server) GetState(ctx context.Context, req *api.GetStateRequest) (*api.GetStateResponse, error) {
-	s.stateLock.RLock()
-	defer s.stateLock.RUnlock()
+	g, ok := s.getGame(req.GameId)
+	if !ok {
+		return nil, status.Error(codes.NotFound, "game not found")
+	}
 
-	if s.currentState == nil {
+	g.stateLock.RLock()
+	defer g.stateLock.RUnlock()
+
+	if g.currentState == nil {
 		return &api.GetStateResponse{State: nil}, nil
 	}
 
 	// Must clone while holding the lock to prevent concurrent modification
-	ret := proto.CloneOf(s.currentState)
+	ret := proto.CloneOf(g.currentState)
 	return &api.GetStateResponse{State: ret}, nil
 }
 
 func (s *server) GetStateHistory(ctx context.Context, req *api.GetStateHistoryRequest) (*api.GetStateHistoryResponse, error) {
-	s.stateLock.RLock()
-	defer s.stateLock.RUnlock()
+	g, ok := s.getGame(req.GameId)
+	if !ok {
+		return nil, status.Error(codes.NotFound, "game not found")
+	}
+
+	g.stateLock.RLock()
+	defer g.stateLock.RUnlock()
 
 	ret := []*api.State{}
-	for _, sh := range s.stateHistory {
+	for _, sh := range g.stateHistory {
 		ret = append(ret, proto.CloneOf(sh))
 	}
 
@@ -472,22 +274,27 @@ func (s *server) GetStateHistory(ctx context.Context, req *api.GetStateHistoryRe
 }
 
 func (s *server) PostAction(ctx context.Context, req *api.PostActionRequest) (*api.PostActionResponse, error) {
+	g, ok := s.getGame(req.GameId)
+	if !ok {
+		return nil, status.Error(codes.NotFound, "game not found")
+	}
+
 	token, ok := getPlayerToken(ctx)
 	if !ok {
 		return nil, status.Error(codes.Internal, "could not get player token from context")
 	}
 
-	s.playersLock.RLock()
-	player := s.players[token]
-	s.playersLock.RUnlock()
+	g.playersLock.RLock()
+	player := g.players[token]
+	g.playersLock.RUnlock()
 
 	if player.id != req.GetAction().GetPlayer() {
 		return nil, status.Error(codes.PermissionDenied, "action player does not match token player")
 	}
 
-	s.stateLock.RLock()
-	currentState := s.currentState
-	s.stateLock.RUnlock()
+	g.stateLock.RLock()
+	currentState := g.currentState
+	g.stateLock.RUnlock()
 
 	// check if the action is valid
 	switch req.GetAction().GetAction().(type) {
@@ -558,7 +365,7 @@ func (s *server) PostAction(ctx context.Context, req *api.PostActionRequest) (*a
 	}
 
 	// register the submitted action
-	s.actionQueue <- req.GetAction()
+	g.actionQueue <- req.GetAction()
 
 	return &api.PostActionResponse{}, nil
 }

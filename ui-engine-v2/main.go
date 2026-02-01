@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -28,8 +27,6 @@ const (
 	screenHeight     = 800
 	minCitySize      = 50
 	maxCitySize      = 60
-	minTroopSize     = 8
-	maxTroopSize     = 10
 	pollInterval     = 200 * time.Millisecond // How often to poll the server
 	turnPlaybackRate = 500 * time.Millisecond // Fixed rate to consume states from buffer
 	minBufferStates  = 3                      // Minimum states to buffer before starting playback
@@ -37,10 +34,8 @@ const (
 	defaultAPIURL    = "http://localhost:8080"
 )
 
-// Game state structures - using API protobuf types
 type Troops map[string]int64
 
-// Display structures
 type CityDisplay struct {
 	Name   string
 	Player string
@@ -90,7 +85,11 @@ type Game struct {
 	screenHeight     int              // Current screen height
 	movementStartMap map[string]int64 // Cache of movement ID -> start turn
 	tickCounter      int              // Frame counter for sprite animations
-	humanUI          *HumanUI         // Human interaction UI (optional)
+	// Game selection
+	gameID           string   // Currently selected game ID
+	availableGames   []string // List of available game IDs
+	dropdownExpanded bool     // Whether the dropdown is expanded
+	dropdownY        int      // Y position of the dropdown
 }
 
 // Player colors palette
@@ -165,26 +164,47 @@ func NewGameLive(apiURL string) (*Game, error) {
 		screenWidth:      screenWidth,
 		screenHeight:     screenHeight,
 		movementStartMap: make(map[string]int64),
+		availableGames:   []string{},
+		dropdownExpanded: false,
+		dropdownY:        20,
 	}
 
-	// Fetch historical data first for the graph
-	if err := game.fetchStateHistory(); err != nil {
-		log.Printf("Warning: Failed to fetch state history: %v", err)
+	// Fetch list of games first
+	if err := game.fetchGameList(); err != nil {
+		log.Printf("Warning: Failed to fetch game list: %v", err)
 	}
 
-	// Try to fetch initial state
-	if err := game.pollServerState(); err != nil {
-		log.Printf("Warning: Failed to fetch initial state: %v", err)
+	// Select the first game if available
+	if len(game.availableGames) > 0 {
+		game.gameID = game.availableGames[0]
+		log.Printf("Selected default game: %s", game.gameID)
+
+		// Fetch historical data first for the graph
+		if err := game.fetchStateHistory(); err != nil {
+			log.Printf("Warning: Failed to fetch state history: %v", err)
+		}
+
+		// Try to fetch initial state
+		if err := game.pollServerState(); err != nil {
+			log.Printf("Warning: Failed to fetch initial state: %v", err)
+		}
+	} else {
+		log.Printf("No games available yet")
 	}
 
 	return game, nil
 }
 
 func (g *Game) fetchStateHistory() error {
+	if g.gameID == "" {
+		return fmt.Errorf("no game selected")
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, "GET", g.apiURL+"/v1/state:history", nil)
+	url := fmt.Sprintf("%s/v1/games/%s/state:history", g.apiURL, g.gameID)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %v", err)
 	}
@@ -223,11 +243,52 @@ func (g *Game) fetchStateHistory() error {
 	return nil
 }
 
-func (g *Game) pollServerState() error {
+func (g *Game) fetchGameList() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, "GET", g.apiURL+"/v1/state", nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", g.apiURL+"/v1/games", nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %v", err)
+	}
+
+	resp, err := g.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to fetch games: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response: %v", err)
+	}
+
+	gamesResponse := api.ListGamesResponse{}
+	if err := protojson.Unmarshal(body, &gamesResponse); err != nil {
+		return fmt.Errorf("failed to parse JSON: %v", err)
+	}
+
+	g.availableGames = gamesResponse.GameIds
+	log.Printf("Fetched %d games", len(g.availableGames))
+
+	return nil
+}
+
+func (g *Game) pollServerState() error {
+	if g.gameID == "" {
+		return nil // silently return if no game selected
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	url := fmt.Sprintf("%s/v1/games/%s/state", g.apiURL, g.gameID)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %v", err)
 	}
@@ -377,11 +438,9 @@ func (g *Game) Update() error {
 	g.tickCounter++ // Increment tick counter for sprite animations
 	now := time.Now()
 
-	// Update human UI if present
-	if g.humanUI != nil {
-		if err := g.humanUI.Update(); err != nil {
-			return err
-		}
+	// Handle mouse input for dropdown in live mode
+	if g.isLiveMode {
+		g.handleDropdownInput()
 	}
 
 	// Poll server in live mode
@@ -421,6 +480,70 @@ func (g *Game) Update() error {
 	g.updateMovements()
 
 	return nil
+}
+
+func (g *Game) handleDropdownInput() {
+	if ebiten.IsMouseButtonPressed(ebiten.MouseButtonLeft) {
+		mx, my := ebiten.CursorPosition()
+		
+		// Check if clicking on dropdown header
+		dropdownX := 10
+		dropdownWidth := 200
+		dropdownHeight := 25
+		
+		if mx >= dropdownX && mx <= dropdownX+dropdownWidth &&
+			my >= g.dropdownY && my <= g.dropdownY+dropdownHeight {
+			// Toggle dropdown on click
+			if !g.dropdownExpanded {
+				g.dropdownExpanded = true
+				// Fetch game list when opening dropdown
+				go func() {
+					if err := g.fetchGameList(); err != nil {
+						log.Printf("Failed to fetch game list: %v", err)
+					}
+				}()
+			}
+			return
+		}
+		
+		// Check if clicking on dropdown options
+		if g.dropdownExpanded {
+			optionHeight := 20
+			for i, gameID := range g.availableGames {
+				optionY := g.dropdownY + dropdownHeight + i*optionHeight
+				if mx >= dropdownX && mx <= dropdownX+dropdownWidth &&
+					my >= optionY && my <= optionY+optionHeight {
+					// Select this game
+					if g.gameID != gameID {
+						g.gameID = gameID
+						log.Printf("Selected game: %s", gameID)
+						// Reset state for new game
+						g.states = []*api.State{}
+						g.stateBuffer = make([]StateBuffer, 0, stateBufferSize)
+						g.cities = make(map[string]*CityDisplay)
+						g.playerColors = make(map[string]color.RGBA)
+						g.playerList = nil
+						g.movements = nil
+						g.currentStateIdx = 0
+						g.displayStateIdx = -1
+						g.currentTurn = 0
+						g.animationStart = time.Time{}
+						g.movementStartMap = make(map[string]int64)
+						// Fetch new game data
+						go func() {
+							if err := g.fetchStateHistory(); err != nil {
+								log.Printf("Failed to fetch history for game %s: %v", gameID, err)
+							}
+						}()
+					}
+					g.dropdownExpanded = false
+					return
+				}
+			}
+			// Clicked outside, close dropdown
+			g.dropdownExpanded = false
+		}
+	}
 }
 
 func (g *Game) updateLiveMode(now time.Time) {
@@ -621,22 +744,6 @@ func (g *Game) calculateCitySize(troops Troops) float64 {
 	return minCitySize + (maxCitySize-minCitySize)*scale
 }
 
-func (g *Game) calculateTroopSize(count int64) float64 {
-	if count == 0 {
-		return 0
-	}
-
-	scale := float64(count) / 10.0 // Assume 10 troops = max size
-	if scale > 1.0 {
-		scale = 1.0
-	}
-	if scale < 0.1 {
-		scale = 0.1 // Minimum visibility
-	}
-
-	return minTroopSize + (maxTroopSize-minTroopSize)*scale
-}
-
 func (g *Game) Draw(screen *ebiten.Image) {
 	screen.Fill(color.RGBA{20, 20, 30, 255})
 
@@ -679,9 +786,86 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	// Draw player statistics panel
 	g.drawPlayerStats(screen)
 
-	// Draw human UI if present
-	if g.humanUI != nil {
-		g.humanUI.Draw(screen)
+	// Draw game dropdown in live mode
+	if g.isLiveMode {
+		g.drawGameDropdown(screen)
+	}
+}
+
+func (g *Game) drawGameDropdown(screen *ebiten.Image) {
+	dropdownX := 10
+	dropdownY := g.dropdownY
+	dropdownWidth := 200
+	dropdownHeight := 25
+
+	// Draw dropdown background
+	dropdownBg := ebiten.NewImage(dropdownWidth, dropdownHeight)
+	dropdownBg.Fill(color.RGBA{40, 40, 50, 230})
+	op := &ebiten.DrawImageOptions{}
+	op.GeoM.Translate(float64(dropdownX), float64(dropdownY))
+	screen.DrawImage(dropdownBg, op)
+
+	// Draw border
+	vector.StrokeRect(screen, float32(dropdownX), float32(dropdownY), 
+		float32(dropdownWidth), float32(dropdownHeight), 1, 
+		color.RGBA{100, 100, 120, 255}, false)
+
+	// Draw selected game text
+	gameText := "No game"
+	if g.gameID != "" {
+		gameText = g.gameID
+		if len(gameText) > 25 {
+			gameText = gameText[:22] + "..."
+		}
+	}
+	ebitenutil.DebugPrintAt(screen, gameText, dropdownX+5, dropdownY+8)
+
+	// Draw arrow indicator
+	arrowX := dropdownX + dropdownWidth - 15
+	arrowY := dropdownY + 12
+	if g.dropdownExpanded {
+		ebitenutil.DebugPrintAt(screen, "^", arrowX, arrowY-2)
+	} else {
+		ebitenutil.DebugPrintAt(screen, "v", arrowX, arrowY-2)
+	}
+
+	// Draw expanded options
+	if g.dropdownExpanded && len(g.availableGames) > 0 {
+		optionHeight := 20
+		totalHeight := len(g.availableGames) * optionHeight
+		
+		// Draw options background
+		optionsBg := ebiten.NewImage(dropdownWidth, totalHeight)
+		optionsBg.Fill(color.RGBA{30, 30, 40, 240})
+		optionsOp := &ebiten.DrawImageOptions{}
+		optionsOp.GeoM.Translate(float64(dropdownX), float64(dropdownY+dropdownHeight))
+		screen.DrawImage(optionsBg, optionsOp)
+
+		// Draw border
+		vector.StrokeRect(screen, float32(dropdownX), float32(dropdownY+dropdownHeight), 
+			float32(dropdownWidth), float32(totalHeight), 1, 
+			color.RGBA{100, 100, 120, 255}, false)
+
+		// Draw each game option
+		for i, gameID := range g.availableGames {
+			optionY := dropdownY + dropdownHeight + i*optionHeight
+			
+			// Highlight selected game
+			if gameID == g.gameID {
+				highlight := ebiten.NewImage(dropdownWidth-2, optionHeight-1)
+				highlight.Fill(color.RGBA{60, 60, 80, 255})
+				highlightOp := &ebiten.DrawImageOptions{}
+				highlightOp.GeoM.Translate(float64(dropdownX+1), float64(optionY+1))
+				screen.DrawImage(highlight, highlightOp)
+			}
+			
+			// Draw game ID text
+			displayText := gameID
+			if len(displayText) > 25 {
+				displayText = displayText[:22] + "..."
+			}
+			ebitenutil.DebugPrintAt(screen, displayText, dropdownX+5, optionY+5)
+		}
 	}
 }
 
@@ -955,119 +1139,30 @@ func drawFilledOval(screen *ebiten.Image, centerX, centerY, radiusX, radiusY flo
 	}
 
 	screen.DrawTriangles(vertices, indices, emptySubImage, &ebiten.DrawTrianglesOptions{
-		FillRule: ebiten.NonZero,
+		FillRule: ebiten.FillRuleNonZero,
 	})
 }
 
 var emptySubImage *ebiten.Image
 
-func (g *Game) drawTroop(screen *ebiten.Image, troopType string, x, y, size float32, playerColor color.RGBA) {
-	// No longer used - kept for compatibility
-}
-
-func (g *Game) drawOrientedTroop(screen *ebiten.Image, troopType string, x, y, size, angle float32, playerColor color.RGBA) {
-	// No longer used - kept for compatibility
-}
-
 func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
 	// Make it square based on the smaller dimension
-	size := outsideWidth
-	if outsideHeight < outsideWidth {
-		size = outsideHeight
-	}
+	size := min(outsideHeight, outsideWidth)
 	// Update the game's screen dimensions
 	g.screenWidth = size
 	g.screenHeight = size
 	return size, size
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func newJSONRequest(ctx context.Context, method, url string, body []byte) (*http.Request, error) {
-	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	return req, nil
-}
-
 func main() {
 	var game *Game
 	var err error
 
-	// Check command line arguments for human mode
 	// Usage:
 	//   ui-engine-v2                              # watch mode
 	//   ui-engine-v2 <file>                       # replay mode
-	//   ui-engine-v2 --human <player-name>        # human interactive mode
-	var playerName string
-	var playerToken string
 
-	if len(os.Args) >= 3 && os.Args[1] == "--human" {
-		playerName = os.Args[2]
-
-		// Register the player
-		apiURL := defaultAPIURL
-		if len(os.Args) >= 4 {
-			apiURL = os.Args[3]
-		}
-
-		game, err = NewGameLive(apiURL)
-		if err != nil {
-			log.Fatalf("Failed to connect to server: %v", err)
-		}
-
-		// Register player
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-
-		registerReq := &api.RegisterRequest{Name: playerName}
-		jsonData, err := protojson.Marshal(registerReq)
-		if err != nil {
-			log.Fatalf("Failed to marshal register request: %v", err)
-		}
-
-		req, err := newJSONRequest(ctx, "POST", apiURL+"/v1/register", jsonData)
-		if err != nil {
-			log.Fatalf("Failed to create register request: %v", err)
-		}
-
-		resp, err := game.httpClient.Do(req)
-		if err != nil {
-			log.Fatalf("Failed to register player: %v", err)
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != 200 {
-			body, _ := io.ReadAll(resp.Body)
-			log.Fatalf("Failed to register player: status %d: %s", resp.StatusCode, string(body))
-		}
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			log.Fatalf("Failed to read register response: %v", err)
-		}
-
-		registerResp := &api.RegisterResponse{}
-		if err := protojson.Unmarshal(body, registerResp); err != nil {
-			log.Fatalf("Failed to parse register response: %v", err)
-		}
-
-		playerToken = registerResp.Token
-		log.Printf("Registered as player '%s' with ID %s and token %s", playerName, registerResp.Id, playerToken)
-
-		// Create human UI
-		game.humanUI = NewHumanUI(game, playerName, registerResp.Id, playerToken)
-
-		log.Printf("Human interactive mode enabled for player '%s'", playerName)
-
-	} else if len(os.Args) < 2 {
+	if len(os.Args) < 2 {
 		log.Println("No file specified, connecting to live server...")
 		apiURL := defaultAPIURL
 		if len(os.Args) == 2 {
@@ -1090,7 +1185,7 @@ func main() {
 	ebiten.SetWindowTitle("Mask Invaders Visualization")
 	ebiten.SetWindowResizingMode(ebiten.WindowResizingModeEnabled)
 	ebiten.SetTPS(60)
-	ebiten.SetFPSMode(ebiten.FPSModeVsyncOn)
+	ebiten.SetVsyncEnabled(true)
 
 	if err := ebiten.RunGame(game); err != nil {
 		log.Fatal(err)

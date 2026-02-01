@@ -99,6 +99,7 @@ func playGame(client *client.Client, playerID string) {
 
 			// Attack with all troops from this city
 			action := &api.PostActionRequest{
+				GameId: gameID,
 				Action: &api.Action{
 					Player: playerID,
 					Action: &api.Action_Attack{

@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/signal"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -21,21 +20,8 @@ import (
 type server struct {
 	api.UnimplementedServerServer
 
-	actionsLock sync.Mutex
-	actionQueue chan *api.Action
-
-	currentState *api.State
-
-	playersLock sync.RWMutex
-	players     map[string]*player
-
-	stateLock    sync.RWMutex
-	stateHistory []*api.State
-
-	submittedActions map[string]map[string]*api.Action // map[playerID][cityName]action (last action wins)
-
-	turnCount   int64
-	gameStarted atomic.Bool // locked once started
+	gamesLock sync.RWMutex
+	games     map[string]*game
 
 	shutdown func()
 }
@@ -51,12 +37,9 @@ func main() {
 
 	grpcServer := grpc.NewServer(grpc.UnaryInterceptor(serverInterceptor))
 	s := &server{
-		submittedActions: make(map[string]map[string]*api.Action),
-		actionQueue:      make(chan *api.Action, 100),
-		players:          make(map[string]*player),
-		shutdown:         cancel,
+		games:    make(map[string]*game),
+		shutdown: cancel,
 	}
-	go s.run(ctx)
 	api.RegisterServerServer(grpcServer, s)
 
 	go func() {

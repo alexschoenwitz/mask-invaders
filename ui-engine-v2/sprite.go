@@ -42,10 +42,6 @@ func newSprite(
 	}
 }
 
-func (s *Sprite) selectFrame(gameTick int, x, y float64, tintR, tintG, tintB, tintA float64) (*ebiten.Image, *ebiten.DrawImageOptions) {
-	return s.selectFrameWithScale(gameTick, x, y, s.scaleX, s.scaleY, tintR, tintG, tintB, tintA)
-}
-
 func (s *Sprite) selectFrameWithScale(gameTick int, x, y, scaleX, scaleY, tintR, tintG, tintB, tintA float64) (*ebiten.Image, *ebiten.DrawImageOptions) {
 	op := &ebiten.DrawImageOptions{}
 	op.GeoM.Scale(scaleX, scaleY)

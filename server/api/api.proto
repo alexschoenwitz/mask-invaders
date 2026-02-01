@@ -7,53 +7,82 @@ import "google/api/annotations.proto";
 option go_package = "github.com/alexschoenwitz/mask-invaders/api";
 
 service Server {
+  rpc CreateGame(CreateGameRequest) returns (CreateGameResponse) {
+    option (google.api.http) = {
+      post: "/v1/games"
+      body: "*"
+    };
+  }
+
+  rpc ListGames(ListGamesRequest) returns (ListGamesResponse) {
+    option (google.api.http) = {get: "/v1/games"};
+  }
+
   rpc StartGame(StartGameRequest) returns (StartGameResponse) {
     option (google.api.http) = {
-      post: "/v1/start"
+      post: "/v1/games/{game_id}/start"
       body: "*"
     };
   }
-  rpc ResetGame(ResetGameRequest) returns (ResetGameResponse) {
-    option (google.api.http) = {
-      post: "/v1/reset"
-      body: "*"
-    };
-  }
+
   rpc GetState(GetStateRequest) returns (GetStateResponse) {
-    option (google.api.http) = {get: "/v1/state"};
+    option (google.api.http) = {get: "/v1/games/{game_id}/state"};
   }
+
   rpc GetStateHistory(GetStateHistoryRequest) returns (GetStateHistoryResponse) {
-    option (google.api.http) = {get: "/v1/state:history"};
+    option (google.api.http) = {get: "/v1/games/{game_id}/state:history"};
   }
+
   rpc PostAction(PostActionRequest) returns (PostActionResponse) {
     option (google.api.http) = {
-      post: "/v1/action"
+      post: "/v1/games/{game_id}/action"
       body: "*"
     };
   }
+
   rpc Register(RegisterRequest) returns (RegisterResponse) {
     option (google.api.http) = {
-      post: "/v1/register"
+      post: "/v1/games/{game_id}/register"
       body: "*"
     };
   }
 }
 
-message StartGameRequest {}
+message CreateGameRequest {}
+
+message CreateGameResponse {
+  string game_id = 1;
+}
+
+message ListGamesRequest {}
+
+message ListGamesResponse {
+  repeated string game_ids = 1;
+}
+
+message StartGameRequest {
+  string game_id = 1;
+}
 
 message StartGameResponse {}
 
-message ResetGameRequest {}
+message ResetGameRequest {
+  string game_id = 1;
+}
 
 message ResetGameResponse {}
 
-message GetStateRequest {}
+message GetStateRequest {
+  string game_id = 1;
+}
 
 message GetStateResponse {
   State state = 1;
 }
 
-message GetStateHistoryRequest {}
+message GetStateHistoryRequest {
+  string game_id = 1;
+}
 
 message GetStateHistoryResponse {
   repeated State states = 1;
@@ -101,7 +130,8 @@ message Distance {
 }
 
 message PostActionRequest {
-  Action action = 1;
+  string game_id = 1;
+  Action action = 2;
 }
 
 message PostActionResponse {}
@@ -132,7 +162,8 @@ message CreateTroop {
 }
 
 message RegisterRequest {
-  string name = 1;
+  string game_id = 1;
+  string name = 2;
 }
 
 message RegisterResponse {

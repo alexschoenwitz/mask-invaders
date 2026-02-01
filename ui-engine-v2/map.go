@@ -23,11 +23,11 @@ var (
 func init() {
 	backgroundImage, _, err := image.Decode(bytes.NewReader(resources.Background_png))
 	if err != nil {
-		log.Fatalf("load bg image: %w", err)
+		log.Fatalf("load bg image: %s", err.Error())
 	}
 	castleImage, _, err := image.Decode(bytes.NewReader(resources.Castle_png))
 	if err != nil {
-		log.Fatalf("load castle image: %w", err)
+		log.Fatalf("load castle image: %s", err.Error())
 	}
 
 	frameWidth := backgroundImage.Bounds().Dx()

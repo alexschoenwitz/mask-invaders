@@ -29,14 +29,17 @@ func NewClient(baseURL string) *Client {
 	}
 }
 
-func (c *Client) Register(name string) (string, error) {
-	reqBody := &api.RegisterRequest{Name: name}
+func (c *Client) Register(name string, gameID string) (string, error) {
+	reqBody := &api.RegisterRequest{
+		GameId: gameID,
+		Name:   name,
+	}
 	jsonData, err := protojson.Marshal(reqBody)
 	if err != nil {
 		return "", err
 	}
 
-	resp, err := http.Post(c.baseURL+"/v1/register", "application/json", bytes.NewBuffer(jsonData))
+	resp, err := http.Post(c.baseURL+"/v1/games/"+gameID+"/register", "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
 		return "", err
 	}
@@ -60,11 +63,18 @@ func (c *Client) Register(name string) (string, error) {
 	return regResp.Id, nil
 }
 
-func (c *Client) StartGame() error {
-	req, err := http.NewRequest("POST", c.baseURL+"/v1/start", nil)
+func (c *Client) StartGame(gameID string) error {
+	reqBody := &api.StartGameRequest{GameId: gameID}
+	jsonData, err := protojson.Marshal(reqBody)
 	if err != nil {
 		return err
 	}
+
+	req, err := http.NewRequest("POST", c.baseURL+"/v1/games/"+gameID+"/start", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("authorization", c.token)
 
 	resp, err := c.httpClient.Do(req)
@@ -87,8 +97,8 @@ func (c *Client) StartGame() error {
 	return nil
 }
 
-func (c *Client) GetState() (*api.State, error) {
-	req, err := http.NewRequest("GET", c.baseURL+"/v1/state", nil)
+func (c *Client) GetState(gameID string) (*api.State, error) {
+	req, err := http.NewRequest("GET", c.baseURL+"/v1/games/"+gameID+"/state", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +130,7 @@ func (c *Client) PostAction(action *api.PostActionRequest) error {
 		return err
 	}
 
-	req, err := http.NewRequest("POST", c.baseURL+"/v1/action", bytes.NewBuffer(jsonData))
+	req, err := http.NewRequest("POST", c.baseURL+"/v1/games/"+action.GameId+"/action", bytes.NewBuffer(jsonData))
 	if err != nil {
 		return err
 	}
