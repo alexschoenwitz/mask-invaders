@@ -107,13 +107,12 @@ func (g *Game) drawCity(screen *ebiten.Image, city *CityDisplay, scale float64) 
 
 	// Don't draw city name - just show the colored castle and troop counts
 	
-	// Draw troop counts in compact single line format: "5/10/3"
+	// Draw troop counts in compact single line format: "5/10/3" centered below castle
 	troopText := fmt.Sprintf("%d/%d/%d", 
 		city.Troops["A"], 
 		city.Troops["B"], 
 		city.Troops["C"])
-	ebitenutil.DebugPrintAt(screen, troopText, int(x-15*scale), int(y+float64(castleSize)+5*scale))
-
-	// Draw troops closer around the city
-	g.drawTroopsAtCity(screen, city, scale)
+	// Center the text below castle (assuming ~6 pixels per char, 7-8 chars average)
+	textOffset := 20.0 // Rough half-width of text
+	ebitenutil.DebugPrintAt(screen, troopText, int(x-textOffset), int(y+float64(castleSize)*0.6))
 }
