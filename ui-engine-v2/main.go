@@ -92,22 +92,22 @@ type Game struct {
 	dropdownY        int      // Y position of the dropdown
 }
 
-// Player colors palette
+// Player colors palette - softer, less saturated colors
 var colors = []color.RGBA{
-	{255, 0, 0, 255},     // Red
-	{0, 255, 0, 255},     // Green
-	{0, 0, 255, 255},     // Blue
-	{255, 255, 0, 255},   // Yellow
-	{255, 0, 255, 255},   // Magenta
-	{0, 255, 255, 255},   // Cyan
-	{255, 128, 0, 255},   // Orange
-	{128, 0, 255, 255},   // Purple
-	{255, 192, 203, 255}, // Pink
-	{0, 128, 0, 255},     // Dark Green
-	{128, 128, 128, 255}, // Gray
-	{255, 255, 255, 255}, // White
-	{128, 0, 0, 255},     // Maroon
-	{0, 128, 128, 255},   // Teal
+	{200, 80, 80, 255},   // Soft Red
+	{80, 180, 80, 255},   // Soft Green
+	{80, 120, 200, 255},  // Soft Blue
+	{220, 200, 80, 255},  // Soft Yellow
+	{200, 100, 200, 255}, // Soft Magenta
+	{80, 200, 200, 255},  // Soft Cyan
+	{220, 140, 80, 255},  // Soft Orange
+	{150, 100, 200, 255}, // Soft Purple
+	{220, 160, 180, 255}, // Soft Pink
+	{100, 150, 100, 255}, // Soft Dark Green
+	{150, 150, 150, 255}, // Soft Gray
+	{220, 220, 220, 255}, // Soft White
+	{150, 80, 80, 255},   // Soft Maroon
+	{80, 150, 150, 255},  // Soft Teal
 	{128, 128, 0, 255},   // Olive
 	{0, 0, 128, 255},     // Navy
 }
@@ -1044,24 +1044,12 @@ func (g *Game) drawTroopsAtCity(screen *ebiten.Image, city *CityDisplay, scale f
 			troopX := city.X*scale + offset*math.Cos(angle)
 			troopY := city.Y*scale + offset*math.Sin(angle)
 
-			// Draw oval shadow marker below troop
-			// Make color less strong (30% opacity)
-			shadowColor := color.RGBA{
-				R: playerColor.R,
-				G: playerColor.G,
-				B: playerColor.B,
-				A: 76, // 30% of 255
-			}
-			// Center better (add sprite width offset), smaller size, more down
-			ovalCenterX := float32(troopX + 8*scale)  // Center it better
-			ovalCenterY := float32(troopY + 20*scale) // Move it more down
-			ovalRadiusX := float32(12 * scale)        // Smaller width
-			ovalRadiusY := float32(5 * scale)         // Smaller height
-			drawFilledOval(screen, ovalCenterX, ovalCenterY, ovalRadiusX, ovalRadiusY, shadowColor)
-
-			// Draw troop sprite without tint
+			// Draw troop sprite with player color tint
 			troopSprite := NewTroopSprite(troopType)
-			troopSprite.Draw(screen, g.tickCounter, troopX, troopY, scale, 1.0, 1.0, 1.0, 1.0)
+			r := float64(playerColor.R) / 255.0
+			gVal := float64(playerColor.G) / 255.0
+			b := float64(playerColor.B) / 255.0
+			troopSprite.Draw(screen, g.tickCounter, troopX, troopY, scale, r, gVal, b, 1.0)
 		}
 	}
 }
@@ -1085,24 +1073,12 @@ func (g *Game) drawMovement(screen *ebiten.Image, movement *MovementDisplay, sca
 			offsetX := currentX + float64((i-1)*8)*scale
 			offsetY := currentY + float64((i-1)*8)*scale
 
-			// Draw oval shadow marker below troop
-			// Make color less strong (30% opacity)
-			shadowColor := color.RGBA{
-				R: playerColor.R,
-				G: playerColor.G,
-				B: playerColor.B,
-				A: 76, // 30% of 255
-			}
-			// Center better (add sprite width offset), smaller size, more down
-			ovalCenterX := float32(offsetX + 8*scale)  // Center it better
-			ovalCenterY := float32(offsetY + 20*scale) // Move it more down
-			ovalRadiusX := float32(12 * scale)         // Smaller width
-			ovalRadiusY := float32(5 * scale)          // Smaller height
-			drawFilledOval(screen, ovalCenterX, ovalCenterY, ovalRadiusX, ovalRadiusY, shadowColor)
-
-			// Draw troop sprite without tint
+			// Draw troop sprite with player color tint
 			troopSprite := NewTroopSprite(troopType)
-			troopSprite.Draw(screen, g.tickCounter, offsetX, offsetY, scale, 1.0, 1.0, 1.0, 1.0)
+			r := float64(playerColor.R) / 255.0
+			gVal := float64(playerColor.G) / 255.0
+			b := float64(playerColor.B) / 255.0
+			troopSprite.Draw(screen, g.tickCounter, offsetX, offsetY, scale, r, gVal, b, 1.0)
 		}
 	}
 }

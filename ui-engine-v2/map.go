@@ -1,86 +1,114 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
-	"image"
 	"image/color"
-	"log"
-
-	_ "image/png"
+	"math"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
-
-	"github.com/alexschoenwitz/mask-invaders/ui-engine-v2/resources"
+	"github.com/hajimehoshi/ebiten/v2/vector"
 )
-
-var (
-	backgroundSprite *Sprite
-	castleSprite     *Sprite
-)
-
-func init() {
-	backgroundImage, _, err := image.Decode(bytes.NewReader(resources.Background_png))
-	if err != nil {
-		log.Fatalf("load bg image: %s", err.Error())
-	}
-	castleImage, _, err := image.Decode(bytes.NewReader(resources.Castle_png))
-	if err != nil {
-		log.Fatalf("load castle image: %s", err.Error())
-	}
-
-	frameWidth := backgroundImage.Bounds().Dx()
-	// Since we're cropping 10% from each edge, the effective frame size is 80% of original
-	effectiveFrameSize := float64(frameWidth/4) * 0.8 // 4 columns, 80% after 10% crop on each side
-	scale := float64(screenWidth) / effectiveFrameSize
-
-	backgroundSprite = newSprite(ebiten.NewImageFromImage(backgroundImage), 4, 1, scale, scale, 2, 0.1) // 10% crop, square scaling
-	castleSprite = newSprite(ebiten.NewImageFromImage(castleImage), 4, 1, 0.2, 0.2, 2, 0.0)             // No crop for castles
-}
 
 func (g *Game) drawBackground(screen *ebiten.Image) {
-	// Calculate dynamic scale based on current screen size
-	frameWidth := backgroundSprite.image.Bounds().Dx() / backgroundSprite.spriteColumns
-	effectiveFrameSize := float64(frameWidth) * 0.8 // 80% after 10% crop on each side
-	scale := float64(g.screenWidth) / effectiveFrameSize
-
-	// Change background every 5 turns
-	// Pass turn multiplied by speed so that sprite division shows all frames
-	gameTick := (int(g.currentTurn) / 5) * backgroundSprite.speed
-
-	// Draw current frame at full opacity
-	img, op := backgroundSprite.selectFrameWithScale(gameTick, 0, 0, scale, scale, 1, 1, 1, 1)
-	screen.DrawImage(img, op)
+	// Simulate day/night cycle - one full cycle every 100 turns for slower, more noticeable transition
+	timeOfDay := math.Mod(g.currentTurn, 100) / 100 // 0 to 1
+	
+	// More realistic day/night cycle
+	var skyR, skyG, skyB uint8
+	if timeOfDay < 0.2 {
+		// Night (0-0.2): dark blue
+		skyR, skyG, skyB = 25, 25, 50
+	} else if timeOfDay < 0.35 {
+		// Sunrise (0.2-0.35): dark -> orange -> bright blue
+		t := (timeOfDay - 0.2) / 0.15
+		if t < 0.5 {
+			// Dark to orange
+			t2 := t * 2
+			skyR = uint8(25 + 230*t2)
+			skyG = uint8(25 + 115*t2)
+			skyB = uint8(50 + 30*t2)
+		} else {
+			// Orange to bright blue
+			t2 := (t - 0.5) * 2
+			skyR = uint8(255 - 120*t2)
+			skyG = uint8(140 + 66*t2)
+			skyB = uint8(80 + 155*t2)
+		}
+	} else if timeOfDay < 0.65 {
+		// Day (0.35-0.65): bright sky blue
+		skyR, skyG, skyB = 135, 206, 235
+	} else if timeOfDay < 0.8 {
+		// Sunset (0.65-0.8): bright blue -> orange -> dark
+		t := (timeOfDay - 0.65) / 0.15
+		if t < 0.5 {
+			// Bright blue to orange
+			t2 := t * 2
+			skyR = uint8(135 + 120*t2)
+			skyG = uint8(206 - 66*t2)
+			skyB = uint8(235 - 155*t2)
+		} else {
+			// Orange to dark
+			t2 := (t - 0.5) * 2
+			skyR = uint8(255 - 230*t2)
+			skyG = uint8(140 - 115*t2)
+			skyB = uint8(80 - 30*t2)
+		}
+	} else {
+		// Night (0.8-1.0): dark blue
+		skyR, skyG, skyB = 25, 25, 50
+	}
+	
+	skyColor := color.RGBA{skyR, skyG, skyB, 255}
+	groundColor := color.RGBA{34, 139, 34, 255} // Forest green
+	
+	// Draw sky (top 1/6 of screen)
+	horizonY := float32(g.screenHeight / 6)
+	vector.DrawFilledRect(screen, 0, 0, float32(g.screenWidth), horizonY, skyColor, false)
+	
+	// Draw ground (bottom 5/6 of screen)
+	vector.DrawFilledRect(screen, 0, horizonY, float32(g.screenWidth), float32(g.screenHeight)-horizonY, groundColor, false)
 }
 
 func (g *Game) drawCity(screen *ebiten.Image, city *CityDisplay, scale float64) {
 	x, y := city.X*scale, city.Y*scale
 
-	// Get player color for the shadow marker
+	// Get player color for the castle
 	playerColor := g.playerColors[city.Player]
 
-	// Draw castle sprite without tint
-	castleScale := 0.5 * scale
-	// Change castle animation every 5 turns
-	// Pass turn multiplied by speed so that sprite division shows all frames
-	gameTick := (int(g.currentTurn) / 5) * castleSprite.speed
-	img, op := castleSprite.selectFrameWithScale(gameTick, x-float64(castleSprite.frameWidth)*castleScale/2, y-float64(castleSprite.frameHeight)*castleScale/2, castleScale, castleScale, 1.0, 1.0, 1.0, 1.0)
-	screen.DrawImage(img, op)
+	// Draw simple castle icon (square with crenellations)
+	castleSize := float32(20 * scale)
 
-	// Draw oval shadow marker below castle (after castle for proper layering)
-	// Make color less strong (30% opacity) to match troop shadows
+	// Main castle body
+	vector.DrawFilledRect(screen, float32(x)-castleSize/2, float32(y)-castleSize/2, castleSize, castleSize, playerColor, false)
+
+	// Castle border/outline
+	borderColor := color.RGBA{255, 255, 255, 150}
+	vector.StrokeRect(screen, float32(x)-castleSize/2, float32(y)-castleSize/2, castleSize, castleSize, 2, borderColor, false)
+
+	// Simple crenellations on top (should sit on top edge of castle, not float above)
+	crenelSize := castleSize / 5
+	for i := float32(0); i < 5; i++ {
+		if int(i)%2 == 0 {
+			vector.DrawFilledRect(screen,
+				float32(x)-castleSize/2+i*crenelSize,
+				float32(y)-castleSize/2,
+				crenelSize, crenelSize/2,
+				playerColor, false)
+		}
+	}
+
+	// Draw oval shadow marker below castle
 	shadowColor := color.RGBA{
 		R: playerColor.R,
 		G: playerColor.G,
 		B: playerColor.B,
 		A: 76, // 30% of 255
 	}
-	// Scale shadow size with castle scale
 	ovalCenterX := float32(x)
-	ovalCenterY := float32(y + float64(castleSprite.frameHeight)*castleScale*0.6) // Position below castle
-	ovalRadiusX := float32(float64(castleSprite.frameWidth) * castleScale * 0.6)  // Scale with castle width
-	ovalRadiusY := float32(float64(castleSprite.frameWidth) * castleScale * 0.2)  // Smaller height for oval shape
+	ovalCenterY := float32(y) + castleSize*0.8
+	ovalRadiusX := castleSize * 0.6
+	ovalRadiusY := castleSize * 0.2
 	drawFilledOval(screen, ovalCenterX, ovalCenterY, ovalRadiusX, ovalRadiusY, shadowColor)
 
 	// Draw city name above the castle
