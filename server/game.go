@@ -156,7 +156,7 @@ func (s *game) initializeGameState() *game {
 
 	for _, p := range s.players {
 		// do a 3 cities per player with equal troops
-		for i := range 1 {
+		for i := range 3 {
 			cityName := fmt.Sprintf("City-%s-%d", p.id, i)
 			initialState.Cities[cityName] = &api.City{
 				Player: p.id,
