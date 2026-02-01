@@ -76,27 +76,34 @@ func (g *Game) drawCity(screen *ebiten.Image, city *CityDisplay, scale float64) 
 	// Get player color for the castle
 	playerColor := g.playerColors[city.Player]
 
-	// Draw simple castle icon (square with crenellations)
+	// Draw simple castle icon with prominent crenellations
 	castleSize := float32(20 * scale)
-
-	// Main castle body
-	vector.DrawFilledRect(screen, float32(x)-castleSize/2, float32(y)-castleSize/2, castleSize, castleSize, playerColor, false)
-
-	// Castle border/outline
-	borderColor := color.RGBA{255, 255, 255, 150}
-	vector.StrokeRect(screen, float32(x)-castleSize/2, float32(y)-castleSize/2, castleSize, castleSize, 2, borderColor, false)
-
-	// Simple crenellations on top (should sit on top edge of castle, not float above)
-	crenelSize := castleSize / 5
-	for i := float32(0); i < 5; i++ {
-		if int(i)%2 == 0 {
-			vector.DrawFilledRect(screen,
-				float32(x)-castleSize/2+i*crenelSize,
-				float32(y)-castleSize/2,
-				crenelSize, crenelSize/2,
-				playerColor, false)
-		}
+	
+	// Main castle body (slightly darker shade of player color for depth)
+	bodyColor := color.RGBA{
+		R: uint8(float32(playerColor.R) * 0.9),
+		G: uint8(float32(playerColor.G) * 0.9),
+		B: uint8(float32(playerColor.B) * 0.9),
+		A: 255,
 	}
+	vector.DrawFilledRect(screen, float32(x)-castleSize/2, float32(y)-castleSize/4, castleSize, castleSize*0.75, bodyColor, false)
+
+	// Three prominent crenellations (towers) on top
+	towerWidth := castleSize / 3.5
+	towerHeight := castleSize / 2
+	
+	// Left tower
+	vector.DrawFilledRect(screen, float32(x)-castleSize/2, float32(y)-castleSize/2, towerWidth, towerHeight, playerColor, false)
+	// Middle tower (slightly taller)
+	vector.DrawFilledRect(screen, float32(x)-towerWidth/2, float32(y)-castleSize/2-castleSize*0.15, towerWidth, towerHeight+castleSize*0.15, playerColor, false)
+	// Right tower
+	vector.DrawFilledRect(screen, float32(x)+castleSize/2-towerWidth, float32(y)-castleSize/2, towerWidth, towerHeight, playerColor, false)
+	
+	// Small gate/door at bottom (darker)
+	gateColor := color.RGBA{0, 0, 0, 100}
+	gateWidth := castleSize / 3
+	gateHeight := castleSize / 3
+	vector.DrawFilledRect(screen, float32(x)-gateWidth/2, float32(y)+castleSize/4-gateHeight, gateWidth, gateHeight, gateColor, false)
 
 	// Don't draw city name - just show the colored castle and troop counts
 	
