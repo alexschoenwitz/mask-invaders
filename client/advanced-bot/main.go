@@ -14,7 +14,7 @@ import (
 
 func main() {
 	serverURL := flag.String("server", "http://localhost:8080", "Server URL")
-	gameID := flag.String("game", "", "Game ID to join")
+	gameID := flag.String("g", "", "Game ID to join")
 	botName := flag.String("name", "AdvancedBot", "Bot name")
 	flag.Parse()
 
@@ -29,11 +29,6 @@ func main() {
 		log.Fatalf("Failed to register: %v", err)
 	}
 	log.Printf("Registered as player %s with name %s", playerID, *botName)
-
-	// Start the game (will fail if already started, which is fine)
-	if err := c.StartGame(*gameID); err != nil {
-		log.Printf("Could not start game (may already be started): %v", err)
-	}
 
 	// Create bot instance
 	bot := &Bot{

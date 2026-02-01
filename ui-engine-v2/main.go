@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"image/color"
 	"io"
@@ -23,15 +24,18 @@ import (
 )
 
 const (
-	screenWidth      = 800
-	screenHeight     = 800
-	minCitySize      = 50
-	maxCitySize      = 60
-	pollInterval     = 100 * time.Millisecond // How often to poll the server
-	turnPlaybackRate = 300 * time.Millisecond // Fixed rate to consume states from buffer
-	minBufferStates  = 3                      // Minimum states to buffer before starting playback
-	stateBufferSize  = 20                     // Number of states to keep in buffer
-	defaultAPIURL    = "http://localhost:8080"
+	screenWidth     = 800
+	screenHeight    = 800
+	minCitySize     = 50
+	maxCitySize     = 60
+	pollInterval    = 100 * time.Millisecond // How often to poll the server
+	minBufferStates = 3                      // Minimum states to buffer before starting playback
+	stateBufferSize = 20                     // Number of states to keep in buffer
+	defaultAPIURL   = "http://localhost:8080"
+)
+
+var (
+	turnPlaybackRate = 300 * time.Millisecond // Turn playback rate - configurable via flag
 )
 
 type Troops map[string]int64
@@ -77,6 +81,7 @@ type Game struct {
 	playerColors     map[string]color.RGBA
 	colorPalette     []color.RGBA
 	playerList       []string
+	playerNames      map[string]string // Maps player ID to player name
 	offscreen        *ebiten.Image
 	isLiveMode       bool             // true if using live API, false if replay mode
 	animationStart   time.Time        // When we started animating current turn
@@ -411,9 +416,17 @@ func (g *Game) initializeCities() {
 
 func (g *Game) assignPlayerColors() {
 	playerSet := make(map[string]bool)
+	g.playerNames = make(map[string]string)
 
-	// Collect all unique players
+	// Collect all unique players and their names
 	for _, state := range g.states {
+		// Extract player names from the state
+		if state.PlayerNames != nil {
+			for playerID, playerName := range state.PlayerNames {
+				g.playerNames[playerID] = playerName
+			}
+		}
+		
 		for _, city := range state.Cities {
 			playerSet[city.Player] = true
 		}
@@ -1023,7 +1036,14 @@ func (g *Game) drawPlayerStats(screen *ebiten.Image) {
 			currentUnits = ph.TotalUnits[len(ph.TotalUnits)-1]
 			currentCastles = ph.Castles[len(ph.Castles)-1]
 		}
-		ebitenutil.DebugPrintAt(screen, fmt.Sprintf("%s: %d (%d)", player, currentUnits, currentCastles),
+		
+		// Use player name if available, otherwise fall back to player ID
+		displayName := player
+		if name, ok := g.playerNames[player]; ok && name != "" {
+			displayName = name
+		}
+		
+		ebitenutil.DebugPrintAt(screen, fmt.Sprintf("%s: %d (%d)", displayName, currentUnits, currentCastles),
 			int(legendX+15), int(legendY+float64(i*15)))
 	}
 
@@ -1131,18 +1151,27 @@ func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
 }
 
 func main() {
+	turnDurationMs := flag.Int("turn-duration-ms", 300, "Turn duration in milliseconds")
+	flag.Parse()
+
+	// Set the turn playback rate from the flag
+	turnPlaybackRate = time.Duration(*turnDurationMs) * time.Millisecond
+
 	var game *Game
 	var err error
+
+	// Get remaining args after flags
+	args := flag.Args()
 
 	// Usage:
 	//   ui-engine-v2                              # watch mode
 	//   ui-engine-v2 <file>                       # replay mode
 
-	if len(os.Args) < 2 {
+	if len(args) < 1 {
 		log.Println("No file specified, connecting to live server...")
 		apiURL := defaultAPIURL
-		if len(os.Args) == 2 {
-			apiURL = os.Args[1]
+		if len(args) == 1 {
+			apiURL = args[0]
 		}
 		game, err = NewGameLive(apiURL)
 		if err != nil {
@@ -1150,8 +1179,8 @@ func main() {
 		}
 		log.Printf("Connected to server at %s", apiURL)
 	} else {
-		log.Printf("Loading replay from %s", os.Args[1])
-		game, err = NewGame(os.Args[1])
+		log.Printf("Loading replay from %s", args[0])
+		game, err = NewGame(args[0])
 		if err != nil {
 			log.Fatalf("Failed to load replay: %v", err)
 		}

@@ -94,6 +94,7 @@ message State {
   map<string, Distance> distances = 3;
   int64 turn = 4;
   map<string, Mine> mines = 5;
+  map<string, string> player_names = 6; // Maps player ID to player name
 }
 
 message Mine {

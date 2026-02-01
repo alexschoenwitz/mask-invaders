@@ -63,8 +63,10 @@ func getCityFromAction(action *api.Action) string {
 func processTurn(currentState *api.State, actions map[string]map[string]*api.Action, turnCount int64) *api.State {
 	state := proto.CloneOf(currentState)
 
-	// first process movements
+	// Group movements arriving this turn by destination city
+	cityArrivals := make(map[string][]BattleParticipant)
 	remainingMovements := make([]*api.Movement, 0, len(state.Movements))
+
 	for _, movement := range state.Movements {
 		if movement.ArrivingTurn != int64(turnCount) {
 			remainingMovements = append(remainingMovements, movement)
@@ -79,14 +81,13 @@ func processTurn(currentState *api.State, actions map[string]map[string]*api.Act
 				fmt.Printf("this should not happen, troops will just disappear")
 				continue
 			}
-			// Battle!
-			attackerWins, survivingTroops := calculateBattle(movement.Troops, city.Troops)
-			if attackerWins {
-				city.Player = movement.Player
-				city.Troops = survivingTroops
-			} else {
-				city.Troops = survivingTroops
-			}
+
+			// Add to arrivals for this city
+			cityArrivals[to.City] = append(cityArrivals[to.City], BattleParticipant{
+				Player: movement.Player,
+				Troops: movement.Troops,
+			})
+
 		case *api.Movement_Mine:
 			// currently nothing happens when arriving at a mine
 			mine, ok := state.Mines[to.Mine]
@@ -103,6 +104,61 @@ func processTurn(currentState *api.State, actions map[string]map[string]*api.Act
 		}
 	}
 	state.Movements = remainingMovements
+
+	// Resolve battles for each city with arrivals
+	for cityName, arrivals := range cityArrivals {
+		city := state.Cities[cityName]
+		if city == nil {
+			continue
+		}
+
+		// Group arrivals by player (combine multiple movements from same player)
+		playerTroops := make(map[string]map[string]int64)
+		for _, arrival := range arrivals {
+			if playerTroops[arrival.Player] == nil {
+				playerTroops[arrival.Player] = make(map[string]int64)
+			}
+			for troopType, count := range arrival.Troops {
+				playerTroops[arrival.Player][troopType] += count
+			}
+		}
+
+		// Build participants list including city defender
+		// Merge friendly troops (same player as city owner) with city troops
+		defenderTroops := make(map[string]int64)
+		for troopType, count := range city.Troops {
+			defenderTroops[troopType] = count
+		}
+
+		// If city owner has arriving troops, merge them with defender
+		if friendlyArrivals, ok := playerTroops[city.Player]; ok {
+			for troopType, count := range friendlyArrivals {
+				defenderTroops[troopType] += count
+			}
+			delete(playerTroops, city.Player) // Remove from attackers
+		}
+
+		participants := make([]BattleParticipant, 0, len(playerTroops)+1)
+
+		// Add city defender (with merged friendly arrivals)
+		participants = append(participants, BattleParticipant{
+			Player: city.Player,
+			Troops: defenderTroops,
+		})
+
+		// Add all attacking players (excluding city owner)
+		for player, troops := range playerTroops {
+			participants = append(participants, BattleParticipant{
+				Player: player,
+				Troops: troops,
+			})
+		}
+
+		// Resolve multi-player battle
+		winner, survivingTroops := resolveMultiPlayerBattle(participants)
+		city.Player = winner
+		city.Troops = survivingTroops
+	}
 
 	// then process player actions: ATTACKS FIRST
 	for playerID, cityActions := range actions {

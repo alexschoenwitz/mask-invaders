@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"log"
 	"net"
 	"net/http"
@@ -20,13 +21,17 @@ import (
 type server struct {
 	api.UnimplementedServerServer
 
-	gamesLock sync.RWMutex
-	games     map[string]*game
+	gamesLock    sync.RWMutex
+	games        map[string]*game
+	turnDuration time.Duration
 
 	shutdown func()
 }
 
 func main() {
+	turnDurationMs := flag.Int("turn-duration-ms", 300, "Turn duration in milliseconds")
+	flag.Parse()
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -37,8 +42,9 @@ func main() {
 
 	grpcServer := grpc.NewServer(grpc.UnaryInterceptor(serverInterceptor))
 	s := &server{
-		games:    make(map[string]*game),
-		shutdown: cancel,
+		games:        make(map[string]*game),
+		turnDuration: time.Duration(*turnDurationMs) * time.Millisecond,
+		shutdown:     cancel,
 	}
 	api.RegisterServerServer(grpcServer, s)
 
