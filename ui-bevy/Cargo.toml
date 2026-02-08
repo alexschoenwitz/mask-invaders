@@ -1,0 +1,25 @@
+[package]
+name = "mask-invaders-ui"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bevy = { version = "0.15", features = ["dynamic_linking"] }
+bevy_prototype_lyon = "0.13"
+prost = "0.13"
+pbjson = "0.7"
+pbjson-types = "0.7"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+reqwest = { version = "0.12", features = ["json", "blocking"] }
+clap = { version = "4", features = ["derive"] }
+
+[build-dependencies]
+prost-build = "0.13"
+pbjson-build = "0.7"
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3

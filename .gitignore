@@ -5,3 +5,5 @@ gamehistory.json
 ui-engine-v2/ui-engine-v2
 # local plugins
 .bin/
+# Rust/Cargo
+ui-bevy/target/
