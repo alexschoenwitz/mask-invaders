@@ -2,6 +2,7 @@ package main
 
 import (
 	"image"
+	_ "image/png"
 
 	"github.com/hajimehoshi/ebiten/v2"
 )
@@ -15,10 +16,9 @@ type Sprite struct {
 	frameHeight int
 	frameWidth  int
 
-	scaleX      float64
-	scaleY      float64
-	speed       int
-	cropPercent float64 // Percentage to crop from each edge (0.1 = 10%)
+	scaleX float64
+	scaleY float64
+	speed  int
 }
 
 func newSprite(
@@ -26,7 +26,6 @@ func newSprite(
 	spriteColumns, spriteRows int,
 	scaleX, scaleY float64,
 	speed int,
-	cropPercent float64,
 ) *Sprite {
 	iW, iH := image.Bounds().Dx(), image.Bounds().Dy()
 	return &Sprite{
@@ -38,21 +37,12 @@ func newSprite(
 		scaleX:        scaleX,
 		scaleY:        scaleY,
 		speed:         speed,
-		cropPercent:   cropPercent,
 	}
 }
 
-func (s *Sprite) selectFrame(gameTick int, x, y float64, tintR, tintG, tintB, tintA float64) (*ebiten.Image, *ebiten.DrawImageOptions) {
-	return s.selectFrameWithScale(gameTick, x, y, s.scaleX, s.scaleY, tintR, tintG, tintB, tintA)
-}
-
-func (s *Sprite) selectFrameWithScale(gameTick int, x, y, scaleX, scaleY, tintR, tintG, tintB, tintA float64) (*ebiten.Image, *ebiten.DrawImageOptions) {
+func (s *Sprite) selectFrame(gameTick int, x, y float64) (*ebiten.Image, *ebiten.DrawImageOptions) {
 	op := &ebiten.DrawImageOptions{}
-	op.GeoM.Scale(scaleX, scaleY)
-
-	// Apply color tint
-	op.ColorScale.Scale(float32(tintR), float32(tintG), float32(tintB), float32(tintA))
-
+	op.GeoM.Scale(s.scaleX, s.scaleY)
 	op.GeoM.Translate(x, y)
 
 	// gives the frame number
@@ -67,12 +57,9 @@ func (s *Sprite) selectFrameWithScale(gameTick int, x, y, scaleX, scaleY, tintR,
 
 	sx, sy := frameColumn*s.frameWidth, frameRow*s.frameHeight
 
-	// Apply cropping to remove edges
-	cropX := int(float64(s.frameWidth) * s.cropPercent)
-	cropY := int(float64(s.frameHeight) * s.cropPercent)
+	// Draw the specific frame "slice"
+	return s.image.SubImage(image.Rect(sx, sy, sx+s.frameWidth, sy+s.frameHeight)).(*ebiten.Image), op
 
-	// Draw the specific frame "slice" with cropped edges
-	return s.image.SubImage(image.Rect(sx+cropX, sy+cropY, sx+s.frameWidth-cropX, sy+s.frameHeight-cropY)).(*ebiten.Image), op
 }
 
 func minSpeed(speed int) int {

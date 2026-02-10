@@ -14,8 +14,8 @@ var (
 	//go:embed castle.png
 	Castle_png []byte
 
-	//go:embed down-of-day.png
-	DownOfDay_png []byte
+	//go:embed map.png
+	Map_png []byte
 
 	//go:embed knight.png
 	Knight_png []byte

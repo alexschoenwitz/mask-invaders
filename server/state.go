@@ -114,7 +114,7 @@ func calculateBattle(attackingTroops, defendingTroops map[string]int64) (attacke
 }
 
 func (s *server) run(ctx context.Context) {
-	ticker := time.NewTicker(500 * time.Millisecond)
+	ticker := time.NewTicker(100 * time.Millisecond)
 	for {
 		select {
 		case <-ctx.Done():
@@ -167,8 +167,8 @@ func (s *server) run(ctx context.Context) {
 			s.stateLock.Unlock()
 
 			if victory {
-				log.Println("Victory condition met, resetting game in 5 seconds...")
-				time.Sleep(5 * time.Second)
+				log.Println("Victory condition met, resetting game in 1 hour...")
+				time.Sleep(5 * time.Hour)
 				s.resetGameState()
 				log.Println("Game state reset. Waiting for players to register again...")
 			}
@@ -370,7 +370,7 @@ func (s *server) initializeGameState() {
 
 	for _, p := range s.players {
 		// do a 3 cities per player with equal troops
-		for i := range 3 {
+		for i := range 2 {
 			cityName := fmt.Sprintf("City-%s-%d", p.id, i)
 			initialState.Cities[cityName] = &api.City{
 				Player: p.id,

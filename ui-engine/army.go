@@ -4,13 +4,15 @@ import (
 	"bytes"
 	"fmt"
 	"image"
+	"image/color"
 	_ "image/png"
 	"log"
-	"math"
 
+	"github.com/alexschoenwitz/mask-invaders/api/server/api"
 	"github.com/alexschoenwitz/mask-invaders/ui-engine/resources"
 
 	"github.com/hajimehoshi/ebiten/v2"
+	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
 )
 
 var (
@@ -64,192 +66,168 @@ const (
 	CastleTmp
 )
 
-type Sprite struct {
-	image *ebiten.Image
-
-	spriteRows    int // Number of rows
-	spriteColumns int // Number of pictures per row
-
-	frameHeight int
-	frameWidth  int
-
-	scaleX float64
-	scaleY float64
-	speed  int
-}
-
-func newSprite(
-	image *ebiten.Image,
-	spriteColumns, spriteRows int,
-	scaleX, scaleY float64,
-	speed int,
-) *Sprite {
-	iW, iH := image.Bounds().Dx(), image.Bounds().Dy()
-	return &Sprite{
-		image:         image,
-		spriteRows:    spriteRows,
-		spriteColumns: spriteColumns,
-		frameWidth:    iW / spriteColumns,
-		frameHeight:   iH / spriteRows,
-		scaleX:        scaleX,
-		scaleY:        scaleY,
-		speed:         speed,
-	}
-}
-
-func (s *Sprite) selectFrame(gameTick int, x, y float64) (*ebiten.Image, *ebiten.DrawImageOptions) {
-	op := &ebiten.DrawImageOptions{}
-	op.GeoM.Scale(s.scaleX, s.scaleY)
-	fmt.Println("---------------------")
-	op.GeoM.Translate(x, y)
-
-	// gives the frame number
-	// depending on the number of frames per row and number of columns
-	// example: a 5 by 3 sprite will have 15 frames in total, 5 frames per row
-	frameNumber := (gameTick / minSpeed(s.speed)) % (s.spriteRows * s.spriteColumns)
-
-	// we then find the row where the frame belongs to
-	// we will use this to know how to crop the right frame from the sprite
-	frameRow := frameNumber / s.spriteColumns
-	frameColumn := frameNumber % s.spriteColumns
-
-	fmt.Println("frame R: ", frameRow)
-	fmt.Println("frame C: ", frameColumn)
-
-	sx, sy := frameColumn*s.frameWidth, frameRow*s.frameHeight
-
-	fmt.Println("StartX: ", sx, sx+s.frameWidth)
-	fmt.Println("StartY: ", sy, s.frameHeight)
-
-	fmt.Println("---------------------")
-
-	// Draw the specific frame "slice"
-	return s.image.SubImage(image.Rect(sx, sy, sx+s.frameWidth, sy+s.frameHeight)).(*ebiten.Image), op
-
-}
-
-func minSpeed(speed int) int {
-	if speed < 1 {
-		return 1
-	}
-
-	return speed
-}
-
 type Army struct {
-	game *Game
+	// thing to move and update state
+	x, y                                           float64
+	startX, startY                                 float64
+	targetX, targetY                               float64
+	turnOfCreation, turnOfArrival, distanceInTurns int
 
-	knights      *Troop
-	knightsCount int
+	deleteResource bool // tells the engine if the object can be de-referenced
 
-	archers      *Troop
-	archersCount int
-
+	// things to draw
+	knights       *Troop
+	knightsCount  int
+	archers       *Troop
+	archersCount  int
 	infantry      *Troop
 	infantryCount int
 
-	startX, startY   float64
-	targetX, targetY float64
-	x, y             float64
-
+	// things to debug
 	showTroopCounter bool
+	ownerColor       color.RGBA
 }
 
-func NewArmy(g *Game,
-	sX, sY float64, tX, tY float64,
-	knight, archer, infantry int,
+func NewArmy(
+	m *api.Movement,
+	distance *api.Distance,
+	coordFrom, coordTo Point,
+	ownerColor color.RGBA,
 	showTroopCounter bool,
 ) *Army {
-	return &Army{
-		game:    g,
-		startX:  sX,
-		startY:  sY,
-		x:       sX,
-		y:       sY,
-		targetX: tX,
-		targetY: tY,
+	var archersCount, infantryCount, knightsCount int
+	for tt, nr := range m.GetTroops() {
+		switch tt {
+		case "A":
+			archersCount = int(nr)
+		case "B":
+			infantryCount = int(nr)
+		case "C":
+			knightsCount = int(nr)
+		}
+	}
 
-		knightsCount:  knight,
-		knights:       NewTroop(g, Knight),
-		archersCount:  archer,
-		archers:       NewTroop(g, Archer),
-		infantryCount: infantry,
-		infantry:      NewTroop(g, Infantry),
+	startingTurn := m.GetArrivingTurn() - distance.GetDistance()
+
+	a := &Army{
+		knights:       NewTroop(Knight),
+		knightsCount:  knightsCount,
+		archers:       NewTroop(Archer),
+		archersCount:  archersCount,
+		infantry:      NewTroop(Infantry),
+		infantryCount: infantryCount,
+
+		startX:          coordFrom.x,
+		startY:          coordFrom.y,
+		targetX:         coordTo.x,
+		targetY:         coordTo.y,
+		turnOfCreation:  int(startingTurn),
+		turnOfArrival:   int(m.GetArrivingTurn()),
+		distanceInTurns: int(distance.GetDistance()),
 
 		showTroopCounter: showTroopCounter,
+		ownerColor:       ownerColor,
 	}
+
+	return a
 }
 
-func (a *Army) Draw(screen *ebiten.Image) {
+func (a *Army) Draw(screen *ebiten.Image, ticker int) {
+	if a.deleteResource { // resouce to be deleted, no need to spend CPU cycles
+		return
+	}
+
 	if a.archersCount > 0 {
-		a.archers.Draw(screen, a.x-5, a.y+5)
+		a.archers.Draw(screen, a.x-5, a.y+5, ticker)
 	}
 	if a.infantryCount > 0 {
-		a.infantry.Draw(screen, a.x, a.y+20)
+		a.infantry.Draw(screen, a.x, a.y+20, ticker)
 	}
 	if a.knightsCount > 0 {
-		a.knights.Draw(screen, a.x+10, a.y+5)
+		a.knights.Draw(screen, a.x+10, a.y+5, ticker)
 	}
 	if a.showTroopCounter {
-		// TODO add counter UI
+		a.drawDebugBox(screen)
 	}
 }
+func (a *Army) Update(turn int,
+	turnProgress float64,
+	ticker int, // TODO(PC): can be removed after refactoring sprite to have a singleton
+) error {
+	if a.turnOfArrival >= turn {
+		a.deleteResource = true
+		return nil
+	}
 
-func (a *Army) Update() error {
-	a.moveArmyToDestination()
+	a.updateArmyCoordinates(turn, turnProgress)
+
 	return nil
 }
 
-func (a *Army) moveArmyToDestination() {
-	dx := a.targetX - a.x
-	dy := a.targetY - a.y
+// depending on the number of ticker per turn
+// the army will bre re-drawn closer to the target position
+// for the next turn
+func (a *Army) updateArmyCoordinates(turn int, turnProgress float64) {
+	// this should never happen
+	// since the object will stop being drawn when turn == turnOfArrival
+	if turn >= a.turnOfArrival {
+		a.x = a.targetX
+		a.y = a.targetY
+		return
+	}
 
-	distance := math.Sqrt(dx*dx + dy*dy)
+	turnsMovedSinceStart := turn - a.turnOfCreation // E.g. distance: 10, turn of arrival: 88, starting turn: 78, current turn: 86 -> the army has moved for 8 turns
 
-	if distance > 1 {
-		a.x += (dx / distance) * 1
-		a.y += (dy / distance) * 1
+	totalDx := a.targetX - a.startX                     // total movement of the troop (from city A -> to city B)
+	totalTurnDx := totalDx / float64(a.distanceInTurns) // total movement in one turn
+	turnDx := turnProgress * totalTurnDx                // total movement in a tick of the the turn
+
+	a.x = a.startX + (totalTurnDx * float64(turnsMovedSinceStart)) + turnDx
+
+	totalDy := a.targetY - a.startY                     // total movement of the troop (from city A -> to city B)
+	totalTurnDy := totalDy / float64(a.distanceInTurns) // total movement in one turn
+	turnDy := turnProgress * totalTurnDy                // total movement in a tick of the the turn
+
+	a.y = a.startY + (totalTurnDy * float64(turnsMovedSinceStart)) + turnDy
+}
+
+// ---------------------------- debug shit------------------------------------------
+// AI slop
+func (a *Army) drawDebugBox(screen *ebiten.Image) {
+	// draw a tall narrow colored box above the army and print troop counts stacked
+	boxW := 30
+	boxH := 40
+	box := ebiten.NewImage(boxW, boxH)
+	box.Fill(a.ownerColor)
+
+	bx := (a.x - float64(boxW)/2) + 10
+	by := a.y - 44
+
+	op := &ebiten.DrawImageOptions{}
+	op.GeoM.Translate(bx, by)
+	screen.DrawImage(box, op)
+
+	// Print troop counts stacked vertically (one per line)
+	lines := []string{
+		fmt.Sprintf("A:%d", a.archersCount),
+		fmt.Sprintf("I:%d", a.infantryCount),
+		fmt.Sprintf("K:%d", a.knightsCount),
+	}
+	// small padding inside the box, and vertical spacing
+	paddingX := 6
+	paddingY := 1
+	lineHeight := 12
+	for i, l := range lines {
+		ebitenutil.DebugPrintAt(screen, l, int(bx)+paddingX, int(by)+paddingY+(i*lineHeight))
 	}
 }
 
-type Troop struct {
-	game   *Game
-	sprite *Sprite
+func (a *Army) Debug() {
+	log.Printf("-------------------->Army %d archers, %d infantry, %d knights\n",
+		a.archersCount, a.infantryCount, a.knightsCount)
 }
 
-func NewTroop(g *Game, t troopType) *Troop {
-	var troop *Troop
-	switch t {
-	case Gopher:
-		troop = &Troop{
-			game:   g,
-			sprite: newSprite(gopherImage, 1, 1, 2, 2, 1),
-		}
-	case Archer:
-		troop = &Troop{
-			game:   g,
-			sprite: newSprite(archerImage, 4, 2, 0.1, 0.1, 10),
-		}
-	case Knight:
-		troop = &Troop{
-			game:   g,
-			sprite: newSprite(knightImage, 4, 2, .15, .15, 10),
-		}
-	case Infantry:
-		troop = &Troop{
-			game:   g,
-			sprite: newSprite(infantryImage, 4, 2, 0.1, 0.1, 10),
-		}
-	case CastleTmp:
-		troop = &Troop{
-			game:   g,
-			sprite: newSprite(castleImage, 4, 3, 0.3, 0.3, 2),
-		}
-	}
-
-	return troop
-}
-
-func (t *Troop) Draw(screen *ebiten.Image, x, y float64) {
-	screen.DrawImage(t.sprite.selectFrame(t.game.tickCounter, x, y))
+func (a *Army) DebugCordinate() {
+	log.Printf("-------------------->Army coordinates x: %f y, %f\n",
+		a.x, a.y)
 }
